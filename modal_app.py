@@ -73,3 +73,28 @@ def main(split: str = "heldout", n: int = 1, selftest: bool = False, out: str = 
     print("\n" + report.table() + "\n")
     Path(out).write_text(report.to_json())
     print(f"wrote {out}")
+
+
+@app.local_entrypoint()
+def bench(total: int = 64):
+    """Measure grading throughput (rollouts/sec) through the parallel grader.
+
+    Grades golden references (correct, so they exercise the full compile+sim path)
+    fanned out with .map across autoscaled containers.
+    """
+    import time
+
+    from rl_hdl.tasks import SEED_TASKS
+
+    goldens = [(t, t.reference_rtl) for t in SEED_TASKS]
+    pairs = [goldens[i % len(goldens)] for i in range(total)]
+    comps = [c for _, c in pairs]
+    tks = [t for t, _ in pairs]
+
+    t0 = time.time()
+    results = list(grade_remote.map(comps, tks))
+    dt = time.time() - t0
+
+    ok = sum(r["reward"] == 1.0 for r in results)
+    print(f"\ngraded {len(results)} designs in {dt:.1f}s "
+          f"({len(results) / dt:.1f} grades/sec), {ok}/{len(results)} == 1.0\n")
