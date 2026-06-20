@@ -33,6 +33,15 @@ grader_image = (
     .add_local_python_source("rl_hdl")
 )
 
+# Lightweight image for inference — just the OpenAI-compatible client. The
+# Fireworks key arrives via the `fireworks-api` Modal Secret, so sampling has no
+# dependency on the caller's local Python env.
+inference_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install("openai>=1.0")
+    .add_local_python_source("rl_hdl")
+)
+
 app = modal.App("rl-hdl")
 
 
@@ -43,6 +52,30 @@ def grade_remote(completion: str, task) -> dict:
 
     r = grade(completion, task)
     return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
+
+
+@app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")])
+def list_models(substr: str = "") -> list[str]:
+    """Return Fireworks model ids visible to this account (optionally filtered)."""
+    import os
+
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=os.environ["FIREWORKS_API_KEY"],
+        base_url=os.environ.get("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"),
+    )
+    ids = [m.id for m in client.models.list().data]
+    return sorted(i for i in ids if substr.lower() in i.lower())
+
+
+@app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=600)
+def sample_remote(task, n: int, model: str) -> list[str]:
+    """Sample `n` completions for one task from Fireworks, inside Modal."""
+    from rl_hdl.inference import complete
+
+    temperature = 0.0 if n == 1 else 0.7  # greedy for a stable n=1 baseline read
+    return [complete(task, model=model, temperature=temperature) for _ in range(n)]
 
 
 @app.local_entrypoint()
@@ -58,11 +91,12 @@ def main(split: str = "heldout", n: int = 1, selftest: bool = False, out: str = 
         pairs = [(t, t.reference_rtl) for t in tasks]
         model = "selftest-golden"
     else:
-        from rl_hdl.inference import model_id, sample
+        from rl_hdl.inference import model_id
 
         model = model_id()
-        print(f"sampling n={n} from {model} for {len(tasks)} {split} tasks ...")
-        pairs = sample(tasks, n)
+        print(f"sampling n={n} from {model} for {len(tasks)} {split} tasks (in Modal) ...")
+        per_task = list(sample_remote.map(tasks, [n] * len(tasks), [model] * len(tasks)))
+        pairs = [(t, c) for t, comps in zip(tasks, per_task) for c in comps]
 
     def modal_grade_batch(ps):
         comps = [c for _, c in ps]
@@ -73,6 +107,16 @@ def main(split: str = "heldout", n: int = 1, selftest: bool = False, out: str = 
     print("\n" + report.table() + "\n")
     Path(out).write_text(report.to_json())
     print(f"wrote {out}")
+
+
+@app.local_entrypoint()
+def models(substr: str = ""):
+    """List Fireworks models available to the account, e.g. --substr coder."""
+    ids = list_models.remote(substr)
+    print(f"\n{len(ids)} models" + (f" matching {substr!r}" if substr else "") + ":")
+    for i in ids:
+        print(f"  {i}")
+    print()
 
 
 @app.local_entrypoint()
