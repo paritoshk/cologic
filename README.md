@@ -61,13 +61,19 @@ Fireworks.
 
 ```bash
 # End-to-end check of the Modal grader — no API key, goldens should hit pass@1 = 1.0
-modal run modal_app.py --selftest --split heldout
+modal run modal_app.py::main --selftest --split heldout
 
 # Zero-shot baseline (needs FIREWORKS_API_KEY)
 export FIREWORKS_API_KEY=...            # and optionally RLHDL_MODEL=accounts/.../<model>
-modal run modal_app.py --split heldout --n 5
-modal run modal_app.py --split train  --n 1
+modal run modal_app.py::main --split heldout --n 5
+modal run modal_app.py::main --split train  --n 1
+
+# Grading throughput (grades/sec through the parallel grader)
+modal run modal_app.py::bench --total 256
 ```
+
+(`::main` is required because the app has multiple entrypoints — Modal won't
+auto-pick one.)
 
 Output is a per-task table (`pass`, `mean_reward`), an aggregate `pass@1`, and a
 `baseline.json`. `mean_reward` is the dense signal — watch it move before
