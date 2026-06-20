@@ -39,23 +39,43 @@ def model_id() -> str:
     return os.environ.get("RLHDL_MODEL", DEFAULT_MODEL)
 
 
-def complete(
+# Headroom for models that emit reasoning before the module: at 1024, harder
+# tasks get truncated mid-module (finish_reason="length") and extract to nothing.
+# Override with RLHDL_MAX_TOKENS (e.g. 8192) to chase reasoning-heavy worst cases.
+DEFAULT_MAX_TOKENS = 4096
+
+
+def max_tokens_setting() -> int:
+    return int(os.environ.get("RLHDL_MAX_TOKENS", DEFAULT_MAX_TOKENS))
+
+
+def complete_raw(
     task: Task,
     *,
     model: str | None = None,
     temperature: float = 0.7,
     top_p: float = 0.95,
-    max_tokens: int = 1024,
-) -> str:
-    """One completion for one task."""
+    max_tokens: int | None = None,
+) -> tuple[str, str]:
+    """One completion; returns (text, finish_reason).
+
+    finish_reason == "length" means the model hit the token cap mid-output — the
+    usual cause of a missing `endmodule` and a 0.0 (no_module) grade.
+    """
     resp = _client().chat.completions.create(
         model=model or model_id(),
         messages=build_messages(task),
         temperature=temperature,
         top_p=top_p,
-        max_tokens=max_tokens,
+        max_tokens=max_tokens if max_tokens is not None else max_tokens_setting(),
     )
-    return resp.choices[0].message.content or ""
+    choice = resp.choices[0]
+    return choice.message.content or "", (choice.finish_reason or "?")
+
+
+def complete(task: Task, **kw) -> str:
+    """One completion (text only)."""
+    return complete_raw(task, **kw)[0]
 
 
 def sample(tasks: list[Task], n: int, *, max_workers: int = 16, **kw) -> list[tuple[Task, str]]:

@@ -84,10 +84,19 @@ modal run modal_app.py::bench --total 256
 (`::main` is required because the app has multiple entrypoints — Modal won't
 auto-pick one.)
 
-Output is a per-task table (`pass`, `mean_reward`), an aggregate `pass@1`, and a
-`baseline.json`. `mean_reward` is the dense signal — watch it move before
-`pass@1` does. The same `evaluate()` runs in-process via `rl_hdl.eval` for quick
-local iteration without Modal.
+Output is a per-task table (`pass`, `mean_reward`), an aggregate `pass@1`, a
+`finish_reason` breakdown, and a `baseline.json`. `mean_reward` is the dense
+signal — watch it move before `pass@1` does. The same `aggregate()` runs
+in-process via `rl_hdl.eval` for quick local iteration without Modal.
+
+Add `--dump records.jsonl` to write a per-sample record (`task_id`,
+`finish_reason`, `reward`, `stage`, `completion`) for diagnosis.
+
+**Truncation note:** reasoning-heavy models can spend the whole token budget
+before emitting the module, which extracts to nothing and grades `0.0`
+(`finish_reason == "length"`). The default is `max_tokens=4096`; raise it with
+`RLHDL_MAX_TOKENS=8192` for the worst cases. (On one deployment this lifted
+held-out pass@1 from 0.567 at 1024 to 0.933 at 4096.)
 
 ## Layout
 

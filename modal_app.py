@@ -70,17 +70,32 @@ def list_models(substr: str = "") -> list[str]:
 
 
 @app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=600)
-def sample_remote(task, n: int, model: str) -> list[str]:
-    """Sample `n` completions for one task from Fireworks, inside Modal."""
-    from rl_hdl.inference import complete
+def sample_remote(task, n: int, model: str, max_tokens: int) -> list[dict]:
+    """Sample `n` completions for one task from Fireworks, inside Modal.
+
+    Each item is {text, finish_reason} so the caller can see truncation.
+    """
+    from rl_hdl.inference import complete_raw
 
     temperature = 0.0 if n == 1 else 0.7  # greedy for a stable n=1 baseline read
-    return [complete(task, model=model, temperature=temperature) for _ in range(n)]
+    out = []
+    for _ in range(n):
+        text, finish = complete_raw(task, model=model, temperature=temperature, max_tokens=max_tokens)
+        out.append({"text": text, "finish_reason": finish})
+    return out
 
 
 @app.local_entrypoint()
-def main(split: str = "heldout", n: int = 1, selftest: bool = False, out: str = "baseline.json"):
-    from rl_hdl.eval import evaluate
+def main(
+    split: str = "heldout",
+    n: int = 1,
+    selftest: bool = False,
+    out: str = "baseline.json",
+    dump: str = "",
+):
+    from collections import Counter
+
+    from rl_hdl.eval import aggregate
     from rl_hdl.tasks import HELDOUT_TASKS, TRAIN_TASKS
 
     tasks = {"heldout": HELDOUT_TASKS, "train": TRAIN_TASKS}[split]
@@ -88,25 +103,41 @@ def main(split: str = "heldout", n: int = 1, selftest: bool = False, out: str = 
     if selftest:
         # Feed each task its own golden reference: a green end-to-end check of the
         # Modal grader with no model / API key required (expect pass@1 = 1.0).
-        pairs = [(t, t.reference_rtl) for t in tasks]
+        samples = [(t, t.reference_rtl, "selftest") for t in tasks]
         model = "selftest-golden"
     else:
-        from rl_hdl.inference import model_id
+        from rl_hdl.inference import max_tokens_setting, model_id
 
         model = model_id()
-        print(f"sampling n={n} from {model} for {len(tasks)} {split} tasks (in Modal) ...")
-        per_task = list(sample_remote.map(tasks, [n] * len(tasks), [model] * len(tasks)))
-        pairs = [(t, c) for t, comps in zip(tasks, per_task) for c in comps]
+        mt = max_tokens_setting()
+        print(f"sampling n={n} from {model} (max_tokens={mt}) for {len(tasks)} {split} tasks (in Modal) ...")
+        per_task = list(sample_remote.map(
+            tasks, [n] * len(tasks), [model] * len(tasks), [mt] * len(tasks)
+        ))
+        samples = [(t, s["text"], s["finish_reason"]) for t, lst in zip(tasks, per_task) for s in lst]
 
-    def modal_grade_batch(ps):
-        comps = [c for _, c in ps]
-        tks = [t for t, _ in ps]
-        return list(grade_remote.map(comps, tks))
+    pairs = [(t, txt) for t, txt, _ in samples]
+    results = list(grade_remote.map([c for _, c in pairs], [t for t, _ in pairs]))
 
-    report = evaluate(pairs, modal_grade_batch, model=model)
+    report = aggregate(pairs, results, model=model)
     print("\n" + report.table() + "\n")
+    print("finish_reason:", dict(Counter(f for _, _, f in samples)))
     Path(out).write_text(report.to_json())
     print(f"wrote {out}")
+
+    if dump:
+        import json
+
+        with open(dump, "w") as fh:
+            for (t, txt, finish), res in zip(samples, results):
+                fh.write(json.dumps({
+                    "task_id": t.task_id,
+                    "finish_reason": finish,
+                    "reward": res["reward"],
+                    "stage": res["info"].get("stage"),
+                    "completion": txt,
+                }) + "\n")
+        print(f"wrote {dump} ({len(samples)} records)")
 
 
 @app.local_entrypoint()
