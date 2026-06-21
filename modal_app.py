@@ -129,6 +129,49 @@ def optimize_remote(task, model: str, n_candidates: int, temperature: float,
     }
 
 
+@app.function(image=harness_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=3600)
+def flywheel_remote(task, model: str, n_candidates: int, temperature: float,
+                    max_repair_rounds: int, max_generations: int, patience: int) -> dict:
+    """Run the single-design flywheel on one design until its gate count plateaus.
+
+    Sampling (Fireworks) + equivalence (Verilator) + PPA (Yosys) all in-container,
+    so the gate-count curve is real. Returns the per-generation trajectory.
+    """
+    import time
+
+    from harness import FlywheelConfig, HarnessConfig, default_model_fn, run_flywheel
+
+    for _ in range(40):  # warm the deployment through scale-from-zero
+        try:
+            default_model_fn([{"role": "user", "content": "ping"}], model=model,
+                             temperature=0.0, max_tokens=1)
+            break
+        except Exception as e:  # noqa: BLE001
+            if "scal" in str(e).lower() or "503" in str(e):
+                time.sleep(15)
+                continue
+            raise
+
+    def model_fn(messages, *, temperature, max_tokens):
+        return default_model_fn(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+
+    res = run_flywheel(task, model_fn=model_fn, config=FlywheelConfig(
+        max_generations=max_generations, patience=patience,
+        harness=HarnessConfig(n_candidates=n_candidates, temperature=temperature,
+                              max_repair_rounds=max_repair_rounds),
+    ))
+    return {
+        "task_id": res.task_id,
+        "baseline_cells": res.baseline_cells,
+        "best_cells": res.best_cells,
+        "total_improvement": res.total_improvement,
+        "plateaued": res.plateaued,
+        "history": [{"gen": g.gen, "cells": g.cells, "reward": round(g.reward, 4),
+                     "equivalent": g.equivalent, "improved": g.improved} for g in res.history],
+        "best_rtl": res.best_rtl,
+    }
+
+
 @app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")])
 def list_models(substr: str = "") -> list[str]:
     """Return Fireworks model ids visible to this account (optionally filtered)."""
@@ -329,6 +372,43 @@ def harness_run(
     if r["improved"]:
         print("\n--- winning RTL ---\n" + b["rtl"])
     print()
+
+
+@app.local_entrypoint()
+def flywheel_run(
+    design: str = "mul8",
+    model: str = "accounts/sorenmadsen/deployments/tpwhh4w8",
+    n: int = 6,
+    temperature: float = 0.9,
+    repair: int = 2,
+    gens: int = 8,
+    patience: int = 3,
+):
+    """Spin up the flywheel on ONE design and watch its gate count fall until it plateaus.
+
+    Usage:  modal run modal_app.py::flywheel_run --design mul8
+            modal run modal_app.py::flywheel_run --design popcount8 --gens 12 --patience 4
+    """
+    from cologic.designs import BY_ID
+
+    task = BY_ID[f"opt_{design}"] if f"opt_{design}" in BY_ID else BY_ID[design]
+    print(f"\nflywheel on {task.task_id} ({task.top_module}) | model={model} "
+          f"| n={n} temp={temperature} repair={repair} gens={gens} patience={patience}\n")
+
+    r = flywheel_remote.remote(task, model, n, temperature, repair, gens, patience)
+
+    print(f"{'gen':>3} {'cells':>6} {'reward':>7} {'equiv':>6} {'improved':>9}")
+    print("-" * 38)
+    for h in r["history"]:
+        cells = "" if h["cells"] is None else h["cells"]
+        print(f"{h['gen']:>3} {str(cells):>6} {h['reward']:>7.3f} "
+              f"{str(h['equivalent']):>6} {str(h['improved']):>9}")
+
+    imp = r["total_improvement"]
+    imp_s = "n/a" if imp is None else f"{imp * 100:+.1f}%"
+    print(f"\nbaseline={r['baseline_cells']} cells -> best={r['best_cells']} cells "
+          f"({imp_s})  plateaued={r['plateaued']}")
+    print("\n--- best RTL ---\n" + r["best_rtl"] + "\n")
 
 
 @app.local_entrypoint()

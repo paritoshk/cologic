@@ -7,6 +7,7 @@ immutable grader (cologic.grader). See optimizer.py for the guardrails.
 
 from __future__ import annotations
 
+from harness.flywheel import FlywheelConfig, FlywheelResult, Generation, run_flywheel
 from harness.optimizer import (
     Candidate,
     HarnessConfig,
@@ -21,4 +22,8 @@ __all__ = [
     "OptimizeResult",
     "Candidate",
     "default_model_fn",
+    "run_flywheel",
+    "FlywheelConfig",
+    "FlywheelResult",
+    "Generation",
 ]
