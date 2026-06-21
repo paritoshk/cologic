@@ -125,11 +125,11 @@ against golden RTL, then submits the Fireworks RFT job using the Modal secret
 # Smoke-test and show the planned Fireworks call without launching training
 modal run scripts/modal_fireworks_rft.py::launch --dry-run
 
-# Launch a Gemma RFT job that updates model weights
+# Launch a small supported RFT job that updates model weights
 modal run scripts/modal_fireworks_rft.py::launch \
-  --base-model accounts/fireworks/models/gemma-4-26b-a4b-it \
+  --base-model accounts/fireworks/models/qwen3-0p6b \
   --account <fireworks-account> \
-  --output-model cologic-gemma-rtl-rft
+  --output-model cologic-qwen3-rtl-rft
 ```
 
 Defaults are intentionally small (`epochs=1`, `batch-size-samples=2`,

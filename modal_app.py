@@ -7,7 +7,8 @@ so rollouts/sec scales with container count rather than local cores. Inference
 Usage:
   modal run modal_app.py --selftest            # no API key; goldens -> pass@1 = 1.0
   modal run modal_app.py --split heldout --n 5 # zero-shot baseline (needs FIREWORKS_API_KEY)
-  modal run modal_app.py --split train  --n 1
+  modal run modal_app.py --split gradient --n 1
+  modal run modal_app.py --split train --n 1
 """
 
 from __future__ import annotations
@@ -143,6 +144,30 @@ def list_models(substr: str = "") -> list[str]:
     return sorted(i for i in ids if substr.lower() in i.lower())
 
 
+@app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=120)
+def probe_model(model: str) -> dict:
+    """Return whether a Fireworks chat model is callable for this account."""
+    import os
+
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=os.environ["FIREWORKS_API_KEY"],
+        base_url=os.environ.get("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"),
+        max_retries=1,
+    )
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "Reply with OK."}],
+            max_tokens=8,
+            temperature=0,
+        )
+        return {"model": model, "ok": True, "text": resp.choices[0].message.content or ""}
+    except Exception as exc:
+        return {"model": model, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 @app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=900)
 def sample_remote(task, model: str, max_tokens: int | None, temperature: float) -> dict:
     """One completion from Fireworks (budget auto-grows on truncation).
@@ -177,9 +202,15 @@ def main(
 
         tasks = load_verilogeval()
     else:
-        from cologic.tasks import HELDOUT_TASKS, TRAIN_TASKS
+        from cologic.tasks import GRADIENT_TASKS, HELDOUT_TASKS, SEED_TASKS, TRAIN_TASKS
 
-        tasks = {"heldout": HELDOUT_TASKS, "train": TRAIN_TASKS}[split]
+        tasks = {
+            "heldout": HELDOUT_TASKS,
+            "train": TRAIN_TASKS,
+            "gradient": GRADIENT_TASKS,
+            "rft": TRAIN_TASKS + GRADIENT_TASKS,
+            "all": SEED_TASKS,
+        }[split]
 
     if selftest:
         # Feed each task its own golden reference: a green end-to-end check of the
@@ -308,6 +339,14 @@ def models(substr: str = ""):
     for i in ids:
         print(f"  {i}")
     print()
+
+
+@app.local_entrypoint()
+def probe(models_csv: str):
+    """Probe comma-separated Fireworks model ids for chat inference access."""
+    model_ids = [m.strip() for m in models_csv.split(",") if m.strip()]
+    for result in probe_model.map(model_ids):
+        print(result)
 
 
 @app.local_entrypoint()

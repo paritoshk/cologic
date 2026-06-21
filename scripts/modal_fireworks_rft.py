@@ -221,16 +221,20 @@ def launch_remote(
     secrets=[modal.Secret.from_name("fireworks-api")],
     timeout=120,
 )
-def status_remote(job_id: str, account: str) -> dict:
+def status_remote(job_id: str, account: str, raw: bool = False) -> dict:
     from fireworks import Fireworks
 
     client = Fireworks(account_id=account or None)
     job = client.reinforcement_fine_tuning_jobs.get(job_id, account_id=account or None)
     data = job.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if raw:
+        return data
+
     progress = data.get("jobProgress") or {}
     return {
         "name": data.get("name"),
         "state": data.get("state"),
+        "error": data.get("error") or data.get("errorMessage") or data.get("failureReason"),
         "output_model": (data.get("trainingConfig") or {}).get("outputModel"),
         "dataset": data.get("dataset"),
         "evaluator": data.get("evaluator"),
@@ -239,10 +243,47 @@ def status_remote(job_id: str, account: str) -> dict:
     }
 
 
+@app.function(
+    image=launcher_image,
+    secrets=[modal.Secret.from_name("fireworks-api")],
+    timeout=120,
+)
+def cancel_remote(job_id: str, account: str) -> dict:
+    from fireworks import Fireworks
+
+    client = Fireworks(account_id=account or None)
+    jobs = client.reinforcement_fine_tuning_jobs
+    job_names = [job_id]
+    if not job_id.startswith("accounts/"):
+        job_names.append(f"accounts/{account}/reinforcementFineTuningJobs/{job_id}")
+
+    for method_name in ("cancel", "stop"):
+        method = getattr(jobs, method_name, None)
+        if method is not None:
+            errors = []
+            for name in job_names:
+                try:
+                    try:
+                        result = method(name, account_id=account or None)
+                    except TypeError:
+                        result = method(name, account_id=account or None, body={})
+                    data = result.model_dump(mode="json", by_alias=True, exclude_none=True) if hasattr(result, "model_dump") else result
+                    return {"action": method_name, "job": name, "result": data}
+                except Exception as exc:
+                    errors.append({"job": name, "error": f"{type(exc).__name__}: {exc}"})
+            return {"action": method_name, "job": job_id, "errors": errors}
+
+    return {
+        "action": "none",
+        "job": job_id,
+        "available_methods": [name for name in dir(jobs) if not name.startswith("_")],
+    }
+
+
 @app.local_entrypoint()
 def launch(
-    base_model: str = "accounts/fireworks/models/gemma-4-26b-a4b-it",
-    output_model: str = "cologic-gemma-rtl-rft",
+    base_model: str = "accounts/fireworks/models/qwen3-0p6b",
+    output_model: str = "cologic-qwen3-rtl-rft",
     account: str = "",
     objective: str = "generate",
     split: str = "",
@@ -295,6 +336,12 @@ def launch(
 
 
 @app.local_entrypoint()
-def status(job_id: str, account: str = ""):
+def status(job_id: str, account: str = "", raw: bool = False):
     """Print Fireworks RFT job state/progress."""
-    print(json.dumps(status_remote.remote(job_id, account), indent=2))
+    print(json.dumps(status_remote.remote(job_id, account, raw), indent=2))
+
+
+@app.local_entrypoint()
+def cancel(job_id: str, account: str = ""):
+    """Cancel/stop a Fireworks RFT job when the SDK supports it."""
+    print(json.dumps(cancel_remote.remote(job_id, account), indent=2))

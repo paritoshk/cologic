@@ -10,8 +10,8 @@ from __future__ import annotations
 import pytest
 
 from cologic.designs import MUL8_BASELINE, MUL8_BROKEN, MUL8_GOOD, mul8
-from cologic.grader import EQUIV_BASE, NOT_EQUIVALENT_REWARD, grade
-from cologic.grader.ppa import yosys_available
+from cologic.grader import EQUIV_BASE, EQUIV_FLOOR, NOT_EQUIVALENT_REWARD, grade
+from cologic.grader.ppa import _cell_count_from_stat, yosys_available
 
 
 def test_golden_is_equivalent_to_itself():
@@ -24,7 +24,8 @@ def test_golden_is_equivalent_to_itself():
 def test_good_rewrite_passes_the_gate():
     r = grade(MUL8_GOOD, mul8)
     assert r.info["equivalent"] is True
-    assert r.reward >= EQUIV_BASE
+    assert r.reward >= EQUIV_FLOOR
+    assert r.reward > NOT_EQUIVALENT_REWARD
 
 
 def test_broken_rewrite_is_caught():
@@ -49,10 +50,30 @@ def test_noncompiling_gets_compile_floor():
     assert r.reward == pytest.approx(0.05)
 
 
+def test_yosys_cell_count_parser_accepts_old_and_new_stat_formats():
+    old = """
+=== mul8 ===
+   Number of cells:                 42
+"""
+    new = """
+=== mul8 ===
+
+        +----------Local Count, excluding submodules.
+        |
+      362 cells
+       95   $_ANDNOT_
+"""
+    assert _cell_count_from_stat(old) == 42
+    assert _cell_count_from_stat(new) == 362
+
+
 @pytest.mark.skipif(not yosys_available(), reason="yosys not on PATH (PPA runs in Modal)")
-def test_good_rewrite_beats_baseline_on_area():
-    """When Yosys is present, the clean rewrite should not be larger than baseline."""
+def test_good_rewrite_gets_ppa_score_when_yosys_is_present():
+    """When Yosys is present, equivalent rewrites get area metrics and PPA reward."""
     r = grade(MUL8_GOOD, mul8)
     assert r.info["stage"] == "graded"
     assert r.info["cand_cells"] is not None and r.info["ref_cells"] is not None
-    assert r.info["area_improvement"] >= 0.0
+    expected = EQUIV_BASE + 0.5 * r.info["area_improvement"]
+    expected = max(EQUIV_FLOOR, min(1.0, expected))
+    assert r.reward == pytest.approx(round(expected, 6))
+    assert r.reward >= EQUIV_FLOOR

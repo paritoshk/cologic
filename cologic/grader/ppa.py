@@ -24,8 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _LOG_CAP = 4000
-# Yosys `stat` prints e.g. "   Number of cells:                 42"
-_CELLS_RE = re.compile(r"Number of cells:\s+(\d+)")
+# Older Yosys `stat` prints e.g. "   Number of cells:                 42".
+_NUMBERED_CELLS_RE = re.compile(r"Number of cells:\s+(\d+)")
+# Newer Yosys versions print a compact table row, e.g. "     362 cells".
+_TABLE_CELLS_RE = re.compile(r"(?m)^\s*(\d+)\s+cells\s*$")
 
 
 class YosysUnavailable(RuntimeError):
@@ -40,6 +42,19 @@ class AreaResult:
 
 def yosys_available() -> bool:
     return shutil.which("yosys") is not None
+
+
+def _cell_count_from_stat(stdout: str) -> int | None:
+    """Return the final top-module cell count from Yosys `stat` output."""
+    matches = _NUMBERED_CELLS_RE.findall(stdout)
+    if matches:
+        return int(matches[-1])
+
+    matches = _TABLE_CELLS_RE.findall(stdout)
+    if matches:
+        return int(matches[-1])
+
+    return None
 
 
 def synth_cells(rtl: str, top_module: str, *, timeout: float = 120.0) -> AreaResult:
@@ -65,10 +80,10 @@ def synth_cells(rtl: str, top_module: str, *, timeout: float = 120.0) -> AreaRes
         log = (proc.stdout + "\n" + proc.stderr)[-_LOG_CAP:]
         if proc.returncode != 0:
             raise RuntimeError(f"yosys failed (rc={proc.returncode}):\n{log}")
-        # The last `Number of cells` is the top module's flattened total.
-        matches = _CELLS_RE.findall(proc.stdout)
-        if not matches:
+        # The last cell-count row is the top module's flattened total.
+        cells = _cell_count_from_stat(proc.stdout)
+        if cells is None:
             raise RuntimeError(f"could not parse cell count from yosys output:\n{log}")
-        return AreaResult(int(matches[-1]), log)
+        return AreaResult(cells, log)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

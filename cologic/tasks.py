@@ -705,6 +705,128 @@ module npu_int34_to_fp32(
 endmodule
 """
 
+TPU_PE_ACCUM_CLEAR_TB = r"""
+// auto-generated testbench for task __TASK_ID__
+module tb;
+  logic clk = 0;
+  logic rst_n;
+  logic clear;
+  logic valid;
+  logic signed [7:0] a;
+  logic signed [7:0] b;
+  wire signed [15:0] y__c;
+  wire signed [15:0] y__r;
+
+  __DUT__ dut_c (.clk(clk), .rst_n(rst_n), .clear(clear), .valid(valid), .a(a), .b(b), .y(y__c));
+  __REF__ dut_r (.clk(clk), .rst_n(rst_n), .clear(clear), .valid(valid), .a(a), .b(b), .y(y__r));
+
+  always #5 clk = ~clk;
+
+  integer passed = 0;
+  integer total = 0;
+  integer step_id = 0;
+
+  task drive(input bit do_clear, input bit do_valid, input signed [7:0] av, input signed [7:0] bv);
+    begin
+      @(negedge clk);
+      clear = do_clear;
+      valid = do_valid;
+      a = av;
+      b = bv;
+      @(posedge clk);
+      #1;
+      total += 1;
+      if (y__c === y__r) begin
+        passed += 1;
+      end else begin
+        $display("MISMATCH step=%0d clear=%0d valid=%0d a=%0d b=%0d candidate=%0d reference=%0d",
+                 step_id, do_clear, do_valid, av, bv, y__c, y__r);
+      end
+      step_id += 1;
+    end
+  endtask
+
+  initial begin
+    clear = 1'b0;
+    valid = 1'b0;
+    a = 8'sd0;
+    b = 8'sd0;
+    rst_n = 1'b0;
+    repeat (3) @(posedge clk);
+    rst_n = 1'b1;
+
+    drive(1'b0, 1'b1,  8'sd2,   8'sd3);   // 6
+    drive(1'b0, 1'b1,  8'sd4,   8'sd5);   // 26
+    drive(1'b0, 1'b0,  8'sd9,   8'sd9);   // hold 26
+    drive(1'b1, 1'b0,  8'sd0,   8'sd0);   // clear to 0
+    drive(1'b0, 1'b1, -8'sd3,   8'sd7);   // -21
+    drive(1'b0, 1'b1,  8'sd2,  -8'sd8);   // -37
+    drive(1'b1, 1'b1,  8'sd6,   8'sd6);   // clear priority
+    drive(1'b0, 1'b1,  8'sd12, -8'sd5);   // -60
+    drive(1'b0, 1'b1, -8'sd11, -8'sd4);   // -16
+
+    $display("RESULT %0d %0d", passed, total);
+    $finish;
+  end
+endmodule
+"""
+
+TPU_PE_ACCUM_CLEAR_REF = r"""
+module tpu_pe_accum (
+    input  wire              clk,
+    input  wire              rst_n,
+    input  wire              clear,
+    input  wire              valid,
+    input  wire signed [7:0] a,
+    input  wire signed [7:0] b,
+    output wire signed [15:0] y
+);
+    reg signed [15:0] acc;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            acc <= 16'sd0;
+        end else if (clear) begin
+            acc <= 16'sd0;
+        end else if (valid) begin
+            acc <= acc + (a * b);
+        end
+    end
+
+    assign y = acc;
+endmodule
+"""
+
+NPU_MAC_INT8_REF = r"""
+module npu_mac_int8 (
+    input  wire signed [7:0]  a,
+    input  wire signed [7:0]  b,
+    input  wire signed [17:0] acc,
+    output wire signed [17:0] y
+);
+    assign y = acc + (a * b);
+endmodule
+"""
+
+NPU_FIND_LEADING_ONE64_REF = r"""
+module npu_find_leading_one64 (
+    input  wire [63:0] data,
+    output reg         valid,
+    output reg  [5:0]  index
+);
+    integer i;
+    always @(*) begin
+        valid = |data;
+        index = 6'd0;
+        for (i = 0; i < 64; i = i + 1) begin
+            if (data[i]) begin
+                index = i[5:0];
+            end
+        end
+    end
+endmodule
+"""
+
 GRADIENT_TASKS: list[Task] = [
     Task(
         task_id="vg_tpu_repeated_matmul2x2",
@@ -787,6 +909,71 @@ GRADIENT_TASKS: list[Task] = [
         seed=64,
         testbench_template=NPU_INT34_TO_FP32_TB,
         tags=["comb", "verified-gradient", "npu", "mac", "fp32", "conversion"],
+    ),
+    Task(
+        task_id="vg_tpu_pe_accum_clear",
+        top_module="tpu_pe_accum",
+        spec=(
+            "Implement a clocked signed 8-bit multiply-accumulate processing "
+            "element for a TPU-style systolic array. On reset, the accumulator "
+            "is zero. On each rising clock edge, `clear` has priority and sets "
+            "`y` to zero. Otherwise, when `valid` is high, accumulate `a * b` "
+            "into the signed 16-bit output `y`; when `valid` is low, hold the "
+            "previous value."
+        ),
+        interface=[
+            Port("clk", "input", 1),
+            Port("rst_n", "input", 1),
+            Port("clear", "input", 1),
+            Port("valid", "input", 1),
+            Port("a", "input", 8),
+            Port("b", "input", 8),
+            Port("y", "output", 16),
+        ],
+        reference_rtl=TPU_PE_ACCUM_CLEAR_REF,
+        n_vectors=9,
+        seed=6,
+        clocked=True,
+        testbench_template=TPU_PE_ACCUM_CLEAR_TB,
+        tags=["clocked", "verified-gradient", "tpu", "systolic-array", "mac", "clear"],
+    ),
+    Task(
+        task_id="vg_npu_mac_int8",
+        top_module="npu_mac_int8",
+        spec=(
+            "Implement a combinational signed INT8 multiply-accumulate lane for "
+            "an NPU MAC array. Treat `a`, `b`, and `acc` as signed two's-complement "
+            "values. Output signed 18-bit `y = acc + a * b`."
+        ),
+        interface=[
+            Port("a", "input", 8),
+            Port("b", "input", 8),
+            Port("acc", "input", 18),
+            Port("y", "output", 18),
+        ],
+        reference_rtl=NPU_MAC_INT8_REF,
+        n_vectors=96,
+        seed=67,
+        tags=["comb", "verified-gradient", "npu", "mac", "int8"],
+    ),
+    Task(
+        task_id="vg_npu_find_leading_one64",
+        top_module="npu_find_leading_one64",
+        spec=(
+            "Implement a combinational leading-one detector for a 64-bit NPU "
+            "normalization path. Set `valid` when any bit of `data` is one. "
+            "When valid, `index` is the index of the most-significant set bit; "
+            "when `data` is zero, `valid` is zero and `index` is zero."
+        ),
+        interface=[
+            Port("data", "input", 64),
+            Port("valid", "output", 1),
+            Port("index", "output", 6),
+        ],
+        reference_rtl=NPU_FIND_LEADING_ONE64_REF,
+        n_vectors=128,
+        seed=56,
+        tags=["comb", "verified-gradient", "npu", "normalization", "leading-one"],
     ),
 ]
 

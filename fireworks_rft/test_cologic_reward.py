@@ -14,7 +14,7 @@ from cologic.verifier import grade
 DATASET = Path(__file__).with_name("dataset.jsonl")
 DEFAULT_ROLLOUT_MODEL = os.environ.get(
     "COLOGIC_RFT_ROLLOUT_MODEL",
-    "accounts/fireworks/models/gemma-4-26b-a4b-it",
+    "accounts/fireworks/models/qwen3-0p6b",
 )
 MAX_DATASET_ROWS = int(os.environ.get("COLOGIC_RFT_MAX_DATASET_ROWS", "0")) or None
 MAX_OUTPUT_TOKENS = int(os.environ.get("COLOGIC_RFT_MAX_OUTPUT_TOKENS", "2048"))
