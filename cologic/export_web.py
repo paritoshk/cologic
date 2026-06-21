@@ -156,13 +156,22 @@ def main() -> None:
     ap.add_argument("--cologic", default="cologic.json", help="second EvalReport (Cologic model)")
     ap.add_argument("--out", default="web/data.json")
     ap.add_argument("--demo", action="store_true", help="write the snapshot seed, no real run")
+    ap.add_argument("--publish", action="store_true", help="also push the record to the live Modal store")
     args = ap.parse_args()
 
-    data = SNAPSHOT if args.demo else build(args.uplift, args.baseline, args.cologic)
-    Path(args.out).write_text(json.dumps(data, indent=2) + "\n")
-    tag = data["source"]
-    print(f"wrote {args.out}  (source={tag}, baseline={data['baseline_pass_at_1']}, "
-          f"cologic={data['cologic_pass_at_1']}, uplift={data['uplift']})")
+    benchmark = SNAPSHOT if args.demo else build(args.uplift, args.baseline, args.cologic)
+
+    # The site (and the live endpoint) consume one nested record: {benchmark, foundry}.
+    from cologic.store import build_record
+    record = build_record(benchmark)
+    Path(args.out).write_text(json.dumps(record, indent=2) + "\n")
+    tag = benchmark["source"]
+    print(f"wrote {args.out}  (source={tag}, baseline={benchmark['baseline_pass_at_1']}, "
+          f"cologic={benchmark['cologic_pass_at_1']}, uplift={benchmark['uplift']})")
+
+    if args.publish:
+        from cologic.store import publish
+        publish(record)
 
 
 def _selfcheck() -> None:
