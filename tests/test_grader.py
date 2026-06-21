@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from rl_hdl.designs import MUL8_BASELINE, MUL8_BROKEN, MUL8_GOOD, mul8
-from rl_hdl.grader import EQUIV_BASE, NOT_EQUIVALENT_REWARD, grade
-from rl_hdl.grader.ppa import yosys_available
+from cologic.designs import MUL8_BASELINE, MUL8_BROKEN, MUL8_GOOD, mul8
+from cologic.grader import EQUIV_BASE, NOT_EQUIVALENT_REWARD, grade
+from cologic.grader.ppa import yosys_available
 
 
 def test_golden_is_equivalent_to_itself():

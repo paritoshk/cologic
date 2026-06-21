@@ -33,7 +33,7 @@ grader_image = (
         "cd /tmp/verilator && autoconf && ./configure && "
         "make -j$(nproc) && make install && rm -rf /tmp/verilator",
     )
-    .add_local_python_source("rl_hdl")
+    .add_local_python_source("cologic")
 )
 
 # Lightweight image for inference — just the OpenAI-compatible client. The
@@ -42,7 +42,7 @@ grader_image = (
 inference_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("openai>=1.0")
-    .add_local_python_source("rl_hdl")
+    .add_local_python_source("cologic")
 )
 
 app = modal.App("rl-hdl")
@@ -50,8 +50,8 @@ app = modal.App("rl-hdl")
 
 @app.function(image=grader_image, timeout=180)
 def grade_remote(completion: str, task) -> dict:
-    """Grade one (completion, task) in a container. Task pickles via rl_hdl."""
-    from rl_hdl.verifier import grade
+    """Grade one (completion, task) in a container. Task pickles via cologic."""
+    from cologic.verifier import grade
 
     r = grade(completion, task)
     return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
@@ -60,7 +60,7 @@ def grade_remote(completion: str, task) -> dict:
 @app.function(image=grader_image, timeout=300)
 def grade_opt_remote(candidate_rtl: str, task) -> dict:
     """Grade one optimization candidate (gate-then-climb, incl. Yosys PPA)."""
-    from rl_hdl.grader import grade
+    from cologic.grader import grade
 
     r = grade(candidate_rtl, task)
     return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
@@ -89,7 +89,7 @@ def sample_remote(task, model: str, max_tokens: int | None, temperature: float) 
     maximum parallelism, and no single container runs n calls in series (which
     could blow the timeout). Returns {text, finish_reason, budget}.
     """
-    from rl_hdl.inference import sample_until_complete
+    from cologic.inference import sample_until_complete
 
     text, finish, budget = sample_until_complete(
         task, model=model, temperature=temperature, max_tokens=max_tokens
@@ -108,14 +108,14 @@ def main(
 ):
     from collections import Counter
 
-    from rl_hdl.eval import aggregate
+    from cologic.eval import aggregate
 
     if split == "verilogeval":
-        from rl_hdl.datasets.verilogeval import load as load_verilogeval
+        from cologic.datasets.verilogeval import load as load_verilogeval
 
         tasks = load_verilogeval()
     else:
-        from rl_hdl.tasks import HELDOUT_TASKS, TRAIN_TASKS
+        from cologic.tasks import HELDOUT_TASKS, TRAIN_TASKS
 
         tasks = {"heldout": HELDOUT_TASKS, "train": TRAIN_TASKS}[split]
 
@@ -125,7 +125,7 @@ def main(
         samples = [(t, t.reference_rtl, "selftest") for t in tasks]
         model = "selftest-golden"
     else:
-        from rl_hdl.inference import model_id
+        from cologic.inference import model_id
 
         model = model_id()
         override = max_tokens or None  # 0 sentinel -> per-task/env resolution + auto-grow
@@ -176,7 +176,7 @@ def floor():
 
     Usage:  modal run modal_app.py::floor
     """
-    from rl_hdl.designs import MUL8_BASELINE, MUL8_BROKEN, MUL8_GOOD, mul8
+    from cologic.designs import MUL8_BASELINE, MUL8_BROKEN, MUL8_GOOD, mul8
 
     cands = [("baseline", MUL8_BASELINE), ("good (a*b)", MUL8_GOOD), ("broken", MUL8_BROKEN)]
     results = list(grade_opt_remote.map([c for _, c in cands], [mul8] * len(cands)))
@@ -213,7 +213,7 @@ def bench(total: int = 64):
     """
     import time
 
-    from rl_hdl.tasks import SEED_TASKS
+    from cologic.tasks import SEED_TASKS
 
     goldens = [(t, t.reference_rtl) for t in SEED_TASKS]
     pairs = [goldens[i % len(goldens)] for i in range(total)]

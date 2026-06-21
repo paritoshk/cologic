@@ -4,8 +4,8 @@ import shutil
 
 import pytest
 
-from rl_hdl.datasets.verilogeval import is_combinational, load, parse_ports
-from rl_hdl.verifier import grade
+from cologic.datasets.verilogeval import is_combinational, load, parse_ports
+from cologic.verifier import grade
 
 
 def test_parse_ports_basic():

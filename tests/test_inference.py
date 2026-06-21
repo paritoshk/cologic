@@ -1,7 +1,7 @@
 """Inference config resolution + truncation auto-grow (no network / API key)."""
 
-from rl_hdl import inference
-from rl_hdl.schema import Port, Task
+from cologic import inference
+from cologic.schema import Port, Task
 
 TASK = Task("t", "spec", "t", [Port("y", "output", 1)], "module t(output y); assign y=0; endmodule")
 

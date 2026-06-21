@@ -10,10 +10,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rl_hdl.datasets.verilogeval import convert_dir
+from cologic.datasets.verilogeval import convert_dir
 
 SRC = Path("data/verilog-eval/dataset_spec-to-rtl")
-OUT = Path("rl_hdl/datasets/verilogeval_combinational.json")
+OUT = Path("cologic/datasets/verilogeval_combinational.json")
 
 
 def main() -> None:
