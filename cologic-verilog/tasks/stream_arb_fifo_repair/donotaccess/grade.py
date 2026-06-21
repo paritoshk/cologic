@@ -260,6 +260,53 @@ def lint_score(rtl: Path) -> dict[str, object]:
         }
 
 
+def power_timing_score(rtl: Path) -> dict[str, object]:
+    """Real synthesis-derived power + timing proxies from yosys (no external PDK).
+
+    rel_power := gate count after synth_ice40 (switching-area proxy; lower=better).
+    crit_path := longest combinational logic depth via `ltp -noff` (delay proxy; lower=better).
+    Both are REAL synthesis outputs; the raw numbers are exposed for honest display. The
+    score shaping uses heuristic bands. Upgrade path: golden-relative ratios, or
+    sky130 + OpenSTA for true mW / slack-ns. Fail-closed like the rest of the grader.
+    """
+    out: dict[str, object] = {
+        "power_score": 0.0, "timing_score": 0.0,
+        "rel_power": None, "crit_path": None,
+        "detail": "synthesis failed", "log": "",
+    }
+    try:
+        with tempfile.TemporaryDirectory(prefix="stream-arb-fifo-pt-") as td:
+            work = Path(td)
+            shutil.copy2(rtl, work / "stream_arb_fifo.sv")
+            script = (
+                "read_verilog -sv stream_arb_fifo.sv; "
+                "hierarchy -top stream_arb_fifo; "
+                "synth_ice40 -top stream_arb_fifo -json synth.json; "
+                "ltp -noff"
+            )
+            # No -q: ltp's "Longest topological path ... (length=N)" line must reach stdout.
+            result = run(["yosys", "-p", script], cwd=work, timeout=60)
+            out["log"] = result.stdout
+            if result.returncode != 0 or not (work / "synth.json").is_file():
+                return out
+            cells = count_cells(work / "synth.json")
+            m = re.search(r"length\s*=\s*(\d+)", result.stdout)  # yosys ltp: "... (length=N)"
+            depth = int(m.group(1)) if m else None
+            out["rel_power"] = cells
+            out["crit_path"] = depth
+            # lower=better; raw numbers above are the real signal, bands are heuristic
+            if cells <= 60:
+                out["power_score"] = 1.0
+            elif cells <= 1400:
+                out["power_score"] = round((1400 - cells) / (1400 - 60), 4)
+            if depth is not None:
+                out["timing_score"] = round(max(0.0, min(1.0, (40 - depth) / 40.0)), 4)
+            out["detail"] = f"synth: {cells} cells, logic depth {depth}"
+    except Exception as exc:  # noqa: BLE001 - fail-closed: any error -> score 0, never raise
+        out["detail"] = f"power/timing error: {exc}"
+    return out
+
+
 def grade(
     root: Path,
     rtl_override: Path | None,
@@ -274,11 +321,18 @@ def grade(
     functional = functional_score(rtl, hidden_tb)
     synthesis = synthesis_score(rtl)
     lint = lint_score(rtl)
+    pt = power_timing_score(rtl)
 
-    functional_weighted = 0.50 * float(functional["score"])
-    synthesis_weighted = float(synthesis["score"])
-    lint_weighted = 0.20 * float(lint["score"])
-    reward = round(functional_weighted + synthesis_weighted + lint_weighted, 6)
+    functional_weighted = 0.40 * float(functional["score"])
+    synthesis_weighted = float(synthesis["score"])  # internally weighted to 0..0.30
+    lint_weighted = 0.10 * float(lint["score"])
+    power_weighted = 0.10 * float(pt["power_score"])
+    timing_weighted = 0.10 * float(pt["timing_score"])
+    reward = round(
+        functional_weighted + synthesis_weighted + lint_weighted
+        + power_weighted + timing_weighted,
+        6,
+    )
     hard_caps: list[str] = []
     if float(functional["score"]) == 0.0:
         reward = 0.0
@@ -289,7 +343,7 @@ def grade(
         "hard_caps": hard_caps,
         "subscores": {
             "functional": {
-                "weight": 0.50,
+                "weight": 0.40,
                 "raw_score": functional["score"],
                 "weighted_score": functional_weighted,
                 "result": functional,
@@ -300,10 +354,22 @@ def grade(
                 "result": synthesis,
             },
             "lint": {
-                "weight": 0.20,
+                "weight": 0.10,
                 "raw_score": lint["score"],
                 "weighted_score": lint_weighted,
                 "result": lint,
+            },
+            "power": {
+                "weight": 0.10,
+                "raw_score": pt["power_score"],
+                "weighted_score": power_weighted,
+                "result": pt,
+            },
+            "timing": {
+                "weight": 0.10,
+                "raw_score": pt["timing_score"],
+                "weighted_score": timing_weighted,
+                "result": pt,
             },
         },
     }

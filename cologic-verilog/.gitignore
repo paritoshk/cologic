@@ -20,3 +20,7 @@ __pycache__/
 # HUD local state (deploy link + eval scratch), account-specific
 .hud/
 .hud_eval.toml
+
+# Pipeline run output (logs + parsed results), account/run-specific
+logs/
+results/

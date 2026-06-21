@@ -36,5 +36,11 @@ rlhdl_*/
 # generated eval output
 baseline.json
 
+# HUD local eval scratch (account-specific)
+.hud_eval.toml
+
 # gstack
 .gstack/
+
+# agent skills (installed per-machine via `npx skills add`)
+.agents/
