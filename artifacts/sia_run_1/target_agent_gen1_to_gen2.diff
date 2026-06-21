@@ -1,0 +1,461 @@
+--- gen_1/target_agent.py
++++ gen_2/target_agent.py
+@@ -1,11 +1,29 @@
+ """Target agent: RTL optimizer for gate-count reduction with provable equivalence.
+ 
+-For each design in <dataset_dir>/manifest.json, samples structural rewrites from
+-the policy model, self-checks each with the immutable Modal grader (Verilator +
+-Yosys), and writes the best equivalent module to <working_dir>/submission/<id>.v.
+-
+-Usage:
++Generation 2 improvements over Gen 1:
++1. MAX_TOKENS increased from 2048 to 16384 — kimi-k2p7-code is a reasoning model
++   that generates 3,000–8,000 tokens of chain-of-thought before the Verilog code
++   block. 2048 tokens caused ALL candidates to be cut off mid-reasoning (no_module).
++2. Removed `compiled` guard from repair loop — all non-equivalent candidates now
++   receive repair attempts (was silently skipping no_module and compile_error).
++3. Specialized no_module recovery — when the model produces no code block at all,
++   use a direct "code only" prompt to get just the Verilog (no reasoning requested).
++4. Extract module before grading — apply extract_module() before calling the grader
++   so we pass clean Verilog, not raw reasoning prose + code.
++5. Adaptive hill climbing — if a candidate improves best_rtl, subsequent candidates
++   refine it rather than restarting from the baseline.
++6. Usage logging — record completion_tokens per call to detect truncation.
++
++Contract (set by SIA):
+     python target_agent.py --dataset_dir <data/public> --working_dir <gen_dir>
++
++For each design in manifest.json: reads baseline RTL, samples structural rewrites from
++the policy model (OpenAI-compatible Fireworks), self-checks each with the IMMUTABLE
++deployed Modal grader (Verilator + Yosys), repairs failures, writes the best verified
++module to submission/<id>.v.
++
++Verification is ALWAYS done via grade_opt_remote. No LLM equivalence checks. Fail
++loudly on grader errors — no fallbacks.
+ """
+ 
+ from __future__ import annotations
+@@ -64,27 +82,72 @@
+ 
+ # ---------------------------------------------------------------------------
+ # Tunable knobs
+-# ---------------------------------------------------------------------------
+-N_CANDIDATES   = int(os.environ.get("COLOGIC_N_CANDIDATES",   "6"))
+-TEMPERATURE    = float(os.environ.get("COLOGIC_TEMPERATURE",  "0.9"))
+-MAX_REPAIR_ROUNDS = int(os.environ.get("COLOGIC_MAX_REPAIR",  "2"))
+-MAX_TOKENS     = int(os.environ.get("COLOGIC_MAX_TOKENS",     "2048"))
++#
++# MAX_TOKENS: Gen 2 critical fix. kimi-k2p7-code is a reasoning model that
++# produces thousands of tokens of chain-of-thought before outputting code.
++# Gen 1 used 2048, which was exhausted during reasoning — no code was ever
++# produced. 16384 gives room for ~6k reasoning + ~2k Verilog code.
++# ---------------------------------------------------------------------------
++N_CANDIDATES      = int(os.environ.get("COLOGIC_N_CANDIDATES",  "6"))
++TEMPERATURE       = float(os.environ.get("COLOGIC_TEMPERATURE", "0.9"))
++MAX_REPAIR_ROUNDS = int(os.environ.get("COLOGIC_MAX_REPAIR",    "2"))
++MAX_TOKENS        = int(os.environ.get("COLOGIC_MAX_TOKENS",    "16384"))
+ 
+ # ---------------------------------------------------------------------------
+ # Rewrite strategies (synth-surviving, arithmetic-structural)
++# Strategy 0 is deliberately broad — it asks the model to identify the most
++# impactful optimization for whatever circuit it sees, rather than blindly
++# applying a specific technique.
+ # ---------------------------------------------------------------------------
+ STRATEGIES = [
+-    "Share arithmetic operators under mutually-exclusive selects: replace "
+-    "`y = s ? (a*b) : (c*d)` with a single multiplier and muxed operands "
+-    "`y = (s?a:c) * (s?b:d)`. Do the same for adders and subtractors.",
+-    "Remove redundant or duplicated arithmetic sub-expressions; fold constants "
+-    "into simpler forms.",
+-    "Strength-reduce constant multiplies/divides to shifts and adds/subtracts "
+-    "(e.g. `x * 8` → `x << 3`, `x * 5` → `(x << 2) + x`).",
+-    "Simplify and flatten nested if-else / case chains into the most compact "
+-    "equivalent combinational form.",
+-    "Restructure the datapath to minimise operator count while remaining exactly "
+-    "equivalent: merge, hoist, or factor common sub-expressions.",
++    # Strategy 0: Circuit-aware analysis — pick the most impactful optimization
++    (
++        "Analyze the circuit and apply the single most impactful structural optimization:\n"
++        "  (a) If it MUXes two or more separate arithmetic operations on a shared select,\n"
++        "      merge into ONE operator with muxed operands: y=(s?a:c)*(s?b:d) not two ops.\n"
++        "  (b) If it counts set bits (popcount), rewrite as an explicit binary adder tree:\n"
++        "      layer-1 adds pairs, layer-2 adds layer-1 outputs, etc. to a final sum.\n"
++        "  (c) If it manually computes a product via partial products or shifts, collapse to\n"
++        "      a single `assign p = a * b;` and let the synthesizer handle it.\n"
++        "  (d) Replace constant multiplications with shifts+adds (x*8->x<<3, x*5->(x<<2)+x).\n"
++        "Choose whichever gives the largest gate-count reduction."
++    ),
++    # Strategy 1: Clean rewrite — simple forms that synthesize smallest
++    (
++        "Rewrite the module as simply as possible:\n"
++        "  - For a multiplier: `assign p = a * b;`\n"
++        "  - For a 4:1 or N:1 mux: use a case statement on sel.\n"
++        "  - For popcount: `assign count = a[0]+a[1]+a[2]+...+a[N];`\n"
++        "  - For conditional arithmetic: single operator with muxed inputs.\n"
++        "Remove any hand-coded loop, bit-mask, or partial-product structure — let the "
++        "synthesizer produce the smallest netlist from a clean high-level description."
++    ),
++    # Strategy 2: Arithmetic operator sharing (key for matrix-multiply circuits)
++    (
++        "Share arithmetic operators under mutually-exclusive selects: replace "
++        "two separate multipliers/adders used in a ternary or case-select with "
++        "a single shared operator whose operands are muxed before the operation. "
++        "E.g.: replace `y = s ? (a*b) : (c*d)` with `y = (s?a:c) * (s?b:d)`. "
++        "Do the same for adders and subtractors."
++    ),
++    # Strategy 3: Strength reduction and constant folding
++    (
++        "Strength-reduce constant multiplies/divides to shifts and adds "
++        "(e.g. `x * 8` -> `x << 3`, `x * 5` -> `(x << 2) + x`). "
++        "Fold compile-time constants. Remove zero-padding and unnecessary width extensions."
++    ),
++    # Strategy 4: Case/mux simplification
++    (
++        "Simplify and flatten cascaded case/if-else chains into the most compact "
++        "equivalent combinational form. For N:1 mux structures, use a clean case "
++        "statement or nested ternaries with minimum logic."
++    ),
++    # Strategy 5: Dead code elimination and common subexpression elimination
++    (
++        "Identify and eliminate dead code; merge equivalent branches; "
++        "apply common subexpression elimination. Look for signals that are "
++        "computed but have the same value under all reachable conditions."
++    ),
+ ]
+ 
+ # ---------------------------------------------------------------------------
+@@ -92,63 +155,46 @@
+ # ---------------------------------------------------------------------------
+ SYSTEM_REWRITE = (
+     "You are an expert hardware engineer specialising in RTL synthesis optimisation. "
+-    "You will be given a CORRECT Verilog module. Rewrite it to use FEWER gates while "
+-    "preserving EXACT functional equivalence. Keep the module name, port names, port "
+-    "directions, and port widths absolutely identical. Respond with exactly one Verilog "
+-    "module in a single ```verilog code block — no prose, no comments outside the block."
++    "You are given a CORRECT Verilog module. Rewrite it to use FEWER gates while "
++    "preserving EXACT functional equivalence. "
++    "Keep the module name, port names, port directions, and port widths IDENTICAL. "
++    "Output EXACTLY ONE Verilog module in a single ```verilog code block. "
++    "No prose after the code block."
+ )
++
++SYSTEM_REFINE = (
++    "You are an expert hardware engineer specialising in RTL synthesis optimisation. "
++    "You are given a Verilog module that has ALREADY been partially optimized. "
++    "Reduce its gate count FURTHER while preserving EXACT functional equivalence. "
++    "Keep the module name, port names, port directions, and port widths IDENTICAL to "
++    "the ORIGINAL interface. "
++    "Output EXACTLY ONE Verilog module in a single ```verilog code block. "
++    "No prose after the code block."
++)
++
+ SYSTEM_REPAIR = (
+-    "You are an expert hardware engineer. Your previous Verilog rewrite failed the "
+-    "formal equivalence check. Fix it so it is EXACTLY equivalent to the original "
+-    "while keeping the gate count as small as possible. Keep the module name and all "
+-    "port declarations identical to the original. Respond with exactly one Verilog "
+-    "module in a single ```verilog code block — no prose."
++    "You are an expert hardware engineer. Your previous Verilog rewrite was rejected "
++    "by the equivalence checker. Fix it so it is EXACTLY equivalent to the original "
++    "module while keeping it as small as possible. "
++    "Keep the module name and interface IDENTICAL to the original. "
++    "Output EXACTLY ONE Verilog module in a single ```verilog code block. "
++    "No prose after the code block."
+ )
+ 
+-
+-# ---------------------------------------------------------------------------
+-# Message builders
+-# ---------------------------------------------------------------------------
+-def _rewrite_msgs(task, strategy: str, dataset_dir: str, working_dir: str) -> list[dict]:
+-    return [
+-        {"role": "system", "content": SYSTEM_REWRITE},
+-        {"role": "user", "content": (
+-            f"CONTEXT (for your information only — do not access the filesystem):\n"
+-            f"  Dataset directory (READ-ONLY): {dataset_dir}\n"
+-            f"  Working directory (READ-WRITE): {working_dir}\n\n"
+-            f"Optimize the following Verilog module for gate count.\n"
+-            f"Apply this strategy where it helps:\n  {strategy}\n\n"
+-            f"```verilog\n{task.reference_rtl}\n```\n\n"
+-            f"Return the optimized module `{task.top_module}` with the same name and interface."
+-        )},
+-    ]
+-
+-
+-def _repair_msgs(task, candidate: str, info: dict, dataset_dir: str, working_dir: str) -> list[dict]:
+-    p, t = info.get("eq_passed", 0), info.get("eq_total", 0)
+-    if info.get("stage") == "compile_error":
+-        why = "it did not compile:\n" + info.get("log", "")[:600]
+-    else:
+-        why = f"it compiles but is NOT equivalent — {t - p}/{t} output-vector comparisons mismatch."
+-    return [
+-        {"role": "system", "content": SYSTEM_REPAIR},
+-        {"role": "user", "content": (
+-            f"CONTEXT (for your information only — do not access the filesystem):\n"
+-            f"  Dataset directory (READ-ONLY): {dataset_dir}\n"
+-            f"  Working directory (READ-WRITE): {working_dir}\n\n"
+-            f"Original (correct) module:\n\n```verilog\n{task.reference_rtl}\n```\n\n"
+-            f"Your rewrite was rejected because {why}\n\n"
+-            f"Your rejected rewrite:\n\n```verilog\n{candidate}\n```\n\n"
+-            f"Return a corrected, exactly equivalent module with the same name and interface."
+-        )},
+-    ]
+-
+-
+-# ---------------------------------------------------------------------------
+-# LLM call helper — records the full message exchange for trajectory logging
+-# ---------------------------------------------------------------------------
+-def _chat(messages: list[dict]) -> tuple[str, list[dict]]:
+-    """Call the model; return (text_response, trajectory_messages)."""
++# Used when stage=no_module: model produced reasoning but no code block at all.
++# Skip chain-of-thought — demand code immediately.
++SYSTEM_CODE_ONLY = (
++    "You are an expert hardware engineer. "
++    "Output ONLY a ```verilog code block containing the optimized Verilog module. "
++    "No analysis, no prose — just the code block."
++)
++
++
++# ---------------------------------------------------------------------------
++# LLM call helper
++# ---------------------------------------------------------------------------
++def _chat(messages: list[dict]) -> tuple[str, dict]:
++    """Call the model; return (text_response, usage_dict)."""
+     resp = _client.chat.completions.create(
+         model=MODEL,
+         messages=messages,
+@@ -157,8 +203,81 @@
+         max_tokens=MAX_TOKENS,
+     )
+     content = resp.choices[0].message.content or ""
+-    traj = list(messages) + [{"role": "assistant", "content": content}]
+-    return content, traj
++    usage = {}
++    if resp.usage:
++        usage = {
++            "prompt_tokens": resp.usage.prompt_tokens,
++            "completion_tokens": resp.usage.completion_tokens,
++            "total_tokens": resp.usage.total_tokens,
++            "cost_usd": 0,  # per-provider pricing unknown
++        }
++    # Warn if the model was cut off — completion_tokens == MAX_TOKENS likely
++    # means reasoning was truncated and no code block was produced.
++    if usage.get("completion_tokens") == MAX_TOKENS:
++        _log("WARN", f"completion_tokens == MAX_TOKENS ({MAX_TOKENS}); model may be cut off!")
++    return content, usage
++
++
++# ---------------------------------------------------------------------------
++# Prompt builders
++# ---------------------------------------------------------------------------
++def _rewrite_user(task, strategy: str) -> str:
++    return (
++        f"Optimize the following Verilog module for gate count.\n"
++        f"Strategy:\n{strategy}\n\n"
++        f"```verilog\n{task.reference_rtl}\n```\n\n"
++        f"Return the optimized module `{task.top_module}` with the SAME name and interface."
++    )
++
++
++def _refine_user(task, current_rtl: str, current_info: dict, strategy: str) -> str:
++    ref_cells = current_info.get("ref_cells", "?")
++    cand_cells = current_info.get("cand_cells", "?")
++    # Strip any markdown fences so the current best appears as clean Verilog.
++    clean_rtl = extract_module(current_rtl, task.top_module) or current_rtl
++    return (
++        f"This module has been optimized from {ref_cells} to {cand_cells} cells. "
++        f"Push it further — target fewer than {cand_cells} cells.\n\n"
++        f"Strategy to try:\n{strategy}\n\n"
++        f"Current optimized module ({cand_cells} cells):\n"
++        f"```verilog\n{clean_rtl}\n```\n\n"
++        f"Original interface to preserve (module `{task.top_module}`, same ports):\n"
++        f"```verilog\n{task.reference_rtl}\n```\n\n"
++        f"Return a further-optimized version with fewer than {cand_cells} cells, "
++        f"preserving exact equivalence."
++    )
++
++
++def _repair_user(task, candidate: str, info: dict) -> str:
++    clean_cand = extract_module(candidate, task.top_module) or candidate
++    stage = info.get("stage", "unknown")
++    if stage == "compile_error":
++        why = "it did not compile:\n" + info.get("log", "")[:800]
++    else:
++        p, t = info.get("eq_passed", 0), info.get("eq_total", 0)
++        why = (
++            f"it compiles but is NOT equivalent — "
++            f"{t - p}/{t} output-vector comparisons mismatch."
++        )
++    return (
++        f"Original (correct) module:\n\n```verilog\n{task.reference_rtl}\n```\n\n"
++        f"Your rewrite was rejected: {why}\n\n"
++        f"Your rejected rewrite:\n\n```verilog\n{clean_cand}\n```\n\n"
++        f"Return a corrected, equivalent module with the SAME name and interface as the original."
++    )
++
++
++def _code_only_user(task, strategy: str) -> str:
++    """Prompt for when the model produced no code at all (stage=no_module).
++
++    Skips reasoning context — just asks for the Verilog directly.
++    """
++    return (
++        f"Output ONLY the optimized Verilog module in a ```verilog code block.\n\n"
++        f"Optimization goal: {strategy}\n\n"
++        f"Module to optimize:\n```verilog\n{task.reference_rtl}\n```\n\n"
++        f"Return module `{task.top_module}` with the SAME name and interface, but fewer gates."
++    )
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -171,9 +290,9 @@
+ ) -> tuple[str, dict, list[dict], list[dict]]:
+     """Return (best_rtl, best_info, candidate_log, trajectory_messages)."""
+     _log("HARNESS", f"optimizing {task.task_id}: baseline + {N_CANDIDATES} rewrites "
+-                    f"(temp={TEMPERATURE}, repair<={MAX_REPAIR_ROUNDS})")
+-
+-    # -- Grade the baseline so we have a valid lower bound --
++                    f"(temp={TEMPERATURE}, repair<={MAX_REPAIR_ROUNDS}, max_tokens={MAX_TOKENS})")
++
++    # Grade the baseline so we have a valid lower bound
+     best_rtl = task.reference_rtl
+     best = grade(best_rtl, task, "baseline")
+     candidate_log = [{
+@@ -186,28 +305,79 @@
+ 
+     for i in range(N_CANDIDATES):
+         strategy = STRATEGIES[i % len(STRATEGIES)]
+-        _log("HARNESS", f"{task.task_id}: sampling rewrite {i} — {strategy[:56]}...")
+-
+-        msgs = _rewrite_msgs(task, strategy, dataset_dir, working_dir)
+-        cand, traj = _chat(msgs)
+-        all_messages.extend(traj)
+-
+-        r = grade(cand, task, f"rewrite{i}")
++
++        # ------------------------------------------------------------------
++        # Adaptive hill climbing:
++        # If a previous candidate improved over baseline, build on it.
++        # Otherwise, try a fresh strategy on the baseline.
++        # ------------------------------------------------------------------
++        if best_rtl is not task.reference_rtl and best.info.get("cand_cells") is not None:
++            approach = f"refine{i}"
++            _log("HARNESS", f"{task.task_id}: refining best "
++                            f"({best.info.get('cand_cells')} cells) round {i} — "
++                            f"{strategy[:56]}...")
++            user_text = _refine_user(task, best_rtl, best.info, strategy)
++            messages: list[dict] = [
++                {"role": "system", "content": SYSTEM_REFINE},
++                {"role": "user", "content": user_text},
++            ]
++        else:
++            approach = f"rewrite{i}"
++            _log("HARNESS", f"{task.task_id}: sampling rewrite {i} — {strategy[:56]}...")
++            user_text = _rewrite_user(task, strategy)
++            messages = [
++                {"role": "system", "content": SYSTEM_REWRITE},
++                {"role": "user", "content": user_text},
++            ]
++
++        raw, usage = _chat(messages)
++        all_messages.extend(messages + [{"role": "assistant", "content": raw, "usage": usage}])
++
++        # Extract the Verilog module before grading — pass clean code, not prose
++        cand = extract_module(raw, task.top_module) or raw
++
++        r = grade(cand, task, approach)
+         rounds = 0
+ 
+-        while (rounds < MAX_REPAIR_ROUNDS
+-               and r.info.get("compiled")
+-               and not r.info.get("equivalent")):
++        # ------------------------------------------------------------------
++        # Gen 2 fix: repair ALL non-equivalent results.
++        # Gen 1 had: `and r.info.get("compiled")` which silently skipped
++        # no_module (stage=no_module means compiled=False) and compile errors.
++        # We now attempt repair for every failure mode.
++        # ------------------------------------------------------------------
++        while rounds < MAX_REPAIR_ROUNDS and not r.info.get("equivalent"):
+             rounds += 1
+-            _log("HARNESS", f"{task.task_id}: rewrite {i} not equivalent — repair {rounds}")
+-            repair_msgs = _repair_msgs(task, cand, r.info, dataset_dir, working_dir)
+-            cand, traj = _chat(repair_msgs)
+-            all_messages.extend(traj)
+-            r = grade(cand, task, f"rewrite{i}+repair{rounds}")
++            stage = r.info.get("stage", "unknown")
++            _log("HARNESS", f"{task.task_id}: {approach} not equivalent "
++                            f"(stage={stage}) — repair {rounds}/{MAX_REPAIR_ROUNDS}")
++
++            if stage == "no_module":
++                # Model produced no code at all — use a code-only prompt to
++                # force it to output the Verilog block directly.
++                repair_user = _code_only_user(task, strategy[:120])
++                repair_msgs = [
++                    {"role": "system", "content": SYSTEM_CODE_ONLY},
++                    {"role": "user", "content": repair_user},
++                ]
++            else:
++                # compile_error or equivalence failure — show what went wrong
++                repair_user = _repair_user(task, cand, r.info)
++                repair_msgs = [
++                    {"role": "system", "content": SYSTEM_REPAIR},
++                    {"role": "user", "content": repair_user},
++                ]
++
++            raw_r, usage_r = _chat(repair_msgs)
++            all_messages.extend(
++                repair_msgs + [{"role": "assistant", "content": raw_r, "usage": usage_r}]
++            )
++
++            cand = extract_module(raw_r, task.top_module) or raw_r
++            r = grade(cand, task, f"{approach}+repair{rounds}")
+ 
+         candidate_log.append({
+-            "origin": f"rewrite{i}",
+-            "strategy": strategy,
++            "origin": approach,
++            "strategy": strategy[:80],
+             "repair_rounds": rounds,
+             "reward": r.reward,
+             "stage": r.info.get("stage"),
+@@ -217,7 +387,7 @@
+ 
+         if r.reward > best.reward:
+             best, best_rtl = r, cand
+-            _log("HARNESS", f"{task.task_id}: new best at rewrite {i}, "
++            _log("HARNESS", f"{task.task_id}: new best at {approach}, "
+                             f"reward={best.reward:.3f}")
+ 
+     ai = best.info.get("area_improvement")
+@@ -247,13 +417,12 @@
+     submission.mkdir(parents=True, exist_ok=True)
+ 
+     _log("MAIN", f"dataset_dir={dataset_dir}  working_dir={working_dir}")
+-    _log("MAIN", f"model={MODEL}  candidates={N_CANDIDATES}  temp={TEMPERATURE}")
++    _log("MAIN", f"model={MODEL}  candidates={N_CANDIDATES}  "
++                 f"temp={TEMPERATURE}  max_tokens={MAX_TOKENS}")
+ 
+     manifest = json.loads((dataset_dir / "manifest.json").read_text())
+     designs  = manifest["designs"]
+ 
+-    # Single-execution task: one trajectory file covering all designs
+-    # (this is one cohesive optimisation run, not independent separate samples)
+     trajectory: list[dict] = []
+ 
+     for entry in designs:
+@@ -282,14 +451,13 @@
+             "equivalent": bool(info.get("equivalent")),
+             "area_improvement": info.get("area_improvement"),
+             "candidates": candidate_log,
+-            # Full LLM message exchange for this design (system-user-assistant turns)
+             "messages": messages,
+         })
+ 
+         print(f"{design_id}: stage={info.get('stage')} equiv={info.get('equivalent')} "
+               f"area={info.get('area_improvement')}")
+ 
+-    # Save single execution trajectory
++    # Save execution trajectory
+     traj_path = working_dir / "agent_execution.json"
+     traj_path.write_text(json.dumps(trajectory, indent=2))
+     _log("MAIN", f"trajectory saved to {traj_path}")

@@ -1,0 +1,21 @@
+{
+  "mean_reward": 0.846918,
+  "mean_area_improvement": 0.693836,
+  "mean_area_um2_improvement": 0.538277,
+  "n_equivalent": 1,
+  "n_total": 1,
+  "designs": [
+    {
+      "id": "tt_um_tpu",
+      "reward": 0.846918,
+      "stage": "graded",
+      "equivalent": true,
+      "ref_cells": 1460,
+      "cand_cells": 447,
+      "area_improvement": 0.693836,
+      "ref_area_um2": 1991.01,
+      "cand_area_um2": 919.296,
+      "area_um2_improvement": 0.538277
+    }
+  ]
+}
