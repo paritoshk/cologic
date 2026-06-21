@@ -37,10 +37,14 @@ def _designs() -> list[dict]:
 
 
 def evaluate(gen_dir: Path) -> dict:
-    from cologic.grader import grade
+    import modal
+
     from cologic.schema import Port
     from cologic.upload import task_from_rtl
 
+    # The immutable verifier (Verilator + Yosys) is the deployed Modal function —
+    # we never carry the toolchain here; we call it by name.
+    grader = modal.Function.from_name("rl-hdl", "grade_opt_remote")
     sub_dir = gen_dir / "submission"
     designs = []
     for d in _designs():
@@ -55,10 +59,10 @@ def evaluate(gen_dir: Path) -> dict:
                             "equivalent": False, "ref_cells": None, "cand_cells": None,
                             "area_improvement": None})
             continue
-        r = grade(f.read_text(), task)
-        i = r.info
+        gr = grader.remote(f.read_text(), task)  # {"reward", "info", "task_id"}
+        i = gr["info"]
         designs.append({
-            "id": d["id"], "reward": r.reward, "stage": i.get("stage"),
+            "id": d["id"], "reward": gr["reward"], "stage": i.get("stage"),
             "equivalent": bool(i.get("equivalent")),
             "ref_cells": i.get("ref_cells"), "cand_cells": i.get("cand_cells"),
             "area_improvement": i.get("area_improvement"),

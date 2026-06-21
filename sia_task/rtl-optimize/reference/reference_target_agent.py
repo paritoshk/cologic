@@ -24,13 +24,24 @@ import argparse
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
+import modal
 from openai import OpenAI
 
 from cologic.extract import extract_module
-from cologic.grader import grade
 from cologic.schema import Port
 from cologic.upload import task_from_rtl
+
+# The immutable verifier (Verilator + Yosys) is the DEPLOYED Modal function. We
+# use it only to RANK our own candidates; the official reward is recomputed by
+# evaluate.py. This agent carries no silicon toolchain.
+_grader = modal.Function.from_name("rl-hdl", "grade_opt_remote")
+
+
+def grade(rtl: str, task) -> SimpleNamespace:
+    out = _grader.remote(rtl, task)  # {"reward", "info", "task_id"}
+    return SimpleNamespace(reward=out["reward"], info=out["info"])
 
 # ── Policy model (injected via env; defaults to the Cologic Fireworks deployment) ──
 MODEL = os.environ.get("COLOGIC_TARGET_MODEL", "accounts/fireworks/models/kimi-k2p7-code")

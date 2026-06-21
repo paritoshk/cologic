@@ -1,0 +1,7 @@
+{
+  "profile_id": "fireworks-meta",
+  "name": "Cologic meta/feedback on Fireworks (PydanticAI)",
+  "agent_impl": "pydantic-ai",
+  "model": "accounts/fireworks/models/kimi-k2p7-code",
+  "provider_id": "fireworks"
+}
