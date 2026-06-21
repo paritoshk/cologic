@@ -18,10 +18,14 @@ from concurrent.futures import ThreadPoolExecutor
 from cologic.prompt import build_messages
 from cologic.schema import Task
 
-DEFAULT_BASE_URL = "https://api.fireworks.ai/inference/v1"
-# Verilog-capable warm-start. Override via RLHDL_MODEL once the exact Fireworks
-# model id / a fine-tune is confirmed.
-DEFAULT_MODEL = "accounts/fireworks/models/qwen2p5-coder-7b-instruct"
+# Default backend: the HUD inference gateway. Fireworks serverless is not enabled
+# on this account (every model 404s "not deployed"), so the gateway is the working
+# path — it routes to Fireworks/Tinker under the hood. To hit Fireworks/vLLM
+# directly, set FIREWORKS_BASE_URL (+ FIREWORKS_API_KEY), or a deployed model via
+# RLHDL_MODEL.
+HUD_GATEWAY_URL = "https://inference.beta.hud.ai/v1"
+DEFAULT_BASE_URL = HUD_GATEWAY_URL
+DEFAULT_MODEL = "Qwen/Qwen3-8B"
 
 
 def _client():
@@ -29,20 +33,21 @@ def _client():
         from openai import OpenAI
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("pip install openai (or rl-hdl[eval]) to use inference.") from e
-    api_key = os.environ.get("FIREWORKS_API_KEY")
-    if not api_key:
-        raise RuntimeError("set FIREWORKS_API_KEY to sample completions.")
-    return OpenAI(api_key=api_key, base_url=os.environ.get("FIREWORKS_BASE_URL", DEFAULT_BASE_URL))
+    base_url = os.environ.get("FIREWORKS_BASE_URL", DEFAULT_BASE_URL)
+    # gateway -> HUD_API_KEY; direct Fireworks/vLLM (base_url overridden) -> FIREWORKS_API_KEY
+    if "hud.ai" in base_url:
+        api_key = os.environ.get("HUD_API_KEY")
+        if not api_key:
+            raise RuntimeError("set HUD_API_KEY for the HUD gateway.")
+    else:
+        api_key = os.environ.get("FIREWORKS_API_KEY")
+        if not api_key:
+            raise RuntimeError("set FIREWORKS_API_KEY for direct Fireworks/vLLM.")
+    return OpenAI(api_key=api_key, base_url=base_url)
 
 
 def model_id() -> str:
     return os.environ.get("RLHDL_MODEL", DEFAULT_MODEL)
-
-
-# HUD inference gateway (OpenAI-compatible). One HUD_API_KEY reaches every gateway
-# model (Qwen, Gemma, gpt-oss, ...). This is the inference surface for the
-# Plan->Forge loop, since the Fireworks account has no deployed models.
-HUD_GATEWAY_URL = "https://inference.beta.hud.ai/v1"
 
 
 def gateway_model_fn(model: str, *, temperature: float = 0.7, max_tokens: int = 2048):
