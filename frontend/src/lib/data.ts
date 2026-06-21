@@ -1,4 +1,5 @@
-// Benchmark numbers — our live Modal data store, fallback to bundled snapshot.
+// Benchmark numbers — served by the optimizer backend's /state route, fallback
+// to bundled snapshot.
 
 export const STATE_URL = "https://yc-hack27--rl-hdl-web.modal.run/state";
 
@@ -40,45 +41,10 @@ export const SNAPSHOT: Benchmark = {
   ],
 };
 
-// Live foundry state — the agents ("minions") editing the Verilog, served from the
-// same /state record. We only consume what the showcase renders; power/compute/clock
-// synthesis figures are intentionally ignored (gate-count + equivalence are the signal).
-// `target` carries the line/region the agent is on; the Forge maps it to a code line.
-export type Agent = { role: string; level: number; target: string; verb: string };
-export type Foundry = { epoch: number; goal: string; design: string; agents: Agent[] };
-
-// Bundled fallback so the section renders if the store is down.
-export const FOUNDRY_SNAPSHOT: Foundry = {
-  epoch: 1284,
-  goal: "fewer gates",
-  design: "mux4.v",
-  agents: [
-    { role: "PLAN", level: 2, target: "line 8", verb: "reading" },
-    { role: "FORGE", level: 3, target: "line 14", verb: "rewriting" },
-    { role: "PROVE", level: 4, target: "line 20", verb: "proving" },
-  ],
-};
-
-export async function fetchFoundry(): Promise<{ data: Foundry; live: boolean }> {
-  try {
-    const c = new AbortController();
-    const to = setTimeout(() => c.abort(), 9000); // /state can cold-start
-    const r = await fetch(STATE_URL, { signal: c.signal, cache: "no-store" });
-    clearTimeout(to);
-    if (!r.ok) throw new Error("bad status");
-    const rec = await r.json();
-    const f = rec.foundry;
-    if (f && Array.isArray(f.agents)) return { data: f as Foundry, live: true };
-    throw new Error("no foundry in record");
-  } catch {
-    return { data: FOUNDRY_SNAPSHOT, live: false };
-  }
-}
-
 export async function fetchBenchmark(): Promise<{ data: Benchmark; live: boolean }> {
   try {
     const c = new AbortController();
-    const to = setTimeout(() => c.abort(), 9000); // /state can cold-start
+    const to = setTimeout(() => c.abort(), 9000); // his /state can cold-start
     const r = await fetch(STATE_URL, { signal: c.signal, cache: "no-store" });
     clearTimeout(to);
     if (!r.ok) throw new Error("bad status");
