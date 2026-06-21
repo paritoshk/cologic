@@ -46,14 +46,14 @@
 
   <!-- HERO -->
   <section style="padding:34px 0 6px">
-    <div class="eyebrow">verifiable-reward RL for hardware</div>
+    <div class="eyebrow">reinforcement learning for RTL synthesis</div>
     <h1 style="font-family:var(--serif);font-weight:400;font-size:34px;line-height:1.12;margin:10px 0 12px;max-width:30ch">
-      A reward you can't fake: compile the Verilog, simulate it against the golden testbench, score what passes.
+      Model-written Verilog, graded by compiling and simulating it against a reference testbench.
     </h1>
     <p style="font-size:15px;color:#44403C;max-width:62ch;margin:0">
-      Cologic samples RTL from a policy model, grades it in a real silicon simulator (Verilator), and uses
-      that pass/fail signal as the reward. No LLM-judge, no proxy — correctness is measured, not guessed.
-      Below is a live read on the held-out benchmark.
+      Cologic samples Verilog from a policy model and grades each sample with the Verilator simulator.
+      The reward is the fraction of testbench vectors whose outputs match the reference. The benchmark
+      below reports pass@1 on the held-out tasks.
     </p>
   </section>
 
@@ -90,8 +90,8 @@
     <div class="fignote">
       <b>Measured today:</b> functional correctness (Verilator co-simulation). <b>Not yet wired into this view:</b>
       power &amp; timing — real synthesis numbers exist in <span class="mono">cologic-verilog/</span> (Yosys gate count / logic depth)
-      but are not part of this benchmark, so no power figure is shown rather than a fake one. No RLVR learning curve is plotted
-      because no real per-epoch training run has been logged.
+      but are not part of this benchmark, so no power figure is shown here. No learning curve is shown
+      because no per-epoch training run has been logged.
     </div>
   </section>
 
@@ -171,8 +171,8 @@ function renderBars(d){
   document.getElementById('bars').innerHTML=s;
   const lifted=tasks.filter(t=>t.cologic>t.baseline).map(t=>t.short);
   document.getElementById('fig1tail').textContent = lifted.length
-    ? "Cologic lifts "+lifted.join(", ")+"; the rest hold."
-    : "No per-task lift over baseline in this run.";
+    ? "Cologic scores higher than baseline on "+lifted.join(", ")+"; the others are unchanged."
+    : "No per-task change over baseline in this run.";
 }
 
 function renderTable(d){
@@ -196,9 +196,9 @@ function renderTable(d){
 function renderStatus(d){
   const el=document.getElementById('status');
   if(d.source==="snapshot"){
-    el.innerHTML=`<span style="background:#FEF3C7;color:#92400E;padding:3px 9px;border-radius:5px">⚠ illustrative snapshot — not a live eval run</span>`;
+    el.innerHTML=`<span style="background:#FEF3C7;color:#92400E;padding:3px 9px;border-radius:5px">snapshot data — not from an eval run</span>`;
   } else {
-    el.innerHTML=`<span style="background:#ECFDF5;color:#065F46;padding:3px 9px;border-radius:5px">● real eval · ${d.source}</span>`;
+    el.innerHTML=`<span style="background:#ECFDF5;color:#065F46;padding:3px 9px;border-radius:5px">eval run · ${d.source}</span>`;
   }
 }
 
