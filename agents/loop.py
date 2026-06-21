@@ -2,12 +2,12 @@
 
 From the design meeting (Jun 20): the three "agents" are tools, effectively one
 model improving a Verilog design in a loop until it stops getting better
-("watch it get better"). They wire around the existing rl-hdl seam:
+("watch it get better"). They wire around the existing cologic seam:
 
   Plan  (Claude)  -> a short strategy/critique hint for the next attempt
-  Forge (policy)  -> writes/rewrites the candidate Verilog            (rl_hdl.prompt)
+  Forge (policy)  -> writes/rewrites the candidate Verilog            (cologic.prompt)
   Prove (Verilator) -> grades candidate vs golden reference, maps outputs -> feedback
-                                                                      (rl_hdl.verifier.grade)
+                                                                      (cologic.verifier.grade)
 
 The model and grader are injected callables so the loop is testable offline
 (see demo() at the bottom — no API key, no Verilator needed). The real defaults
@@ -19,18 +19,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from rl_hdl.prompt import build_messages
-from rl_hdl.schema import GradeResult, Task
+from cologic.prompt import build_messages
+from cologic.schema import GradeResult, Task
 
 # A model is just: messages -> completion text. Fireworks/Gemma, Claude, or a stub.
 ModelFn = Callable[[list[dict]], str]
-# A grader is: (completion, task) -> GradeResult. Defaults to rl_hdl.verifier.grade.
+# A grader is: (completion, task) -> GradeResult. Defaults to cologic.verifier.grade.
 GraderFn = Callable[[str, Task], GradeResult]
 
 
 def feedback_from(result: GradeResult) -> str:
     """Prove's 'output mapper': turn a GradeResult into a one-line critique the
-    next attempt can act on. Stable against the info contract in rl_hdl.schema."""
+    next attempt can act on. Stable against the info contract in cologic.schema."""
     info = result.info
     stage = info.get("stage")
     if stage == "no_module":
@@ -96,7 +96,7 @@ class Prove:
     def __call__(self, task: Task, completion: str) -> GradeResult:
         grade = self.grader
         if grade is None:
-            from rl_hdl.verifier import grade as grade  # lazy import: Verilator only when real
+            from cologic.verifier import grade as grade  # lazy import: Verilator only when real
         return grade(completion, task)
 
 
@@ -151,7 +151,7 @@ def demo() -> None:
 
     Stub model emits broken RTL first, then 'golden'; stub grader scores them.
     Asserts the loop climbs to a correct design and stops at it."""
-    from rl_hdl.schema import Port
+    from cologic.schema import Port
 
     task = Task(task_id="t", spec="a AND b", top_module="m",
                 interface=[Port("a", "input"), Port("b", "input"), Port("y", "output")],

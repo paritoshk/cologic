@@ -1,4 +1,4 @@
-"""The three-agent self-improvement loop on top of the rl-hdl reward seam.
+"""The three-agent self-improvement loop on top of the cologic reward seam.
 
 Plan (Claude) -> Forge (policy model writes RTL) -> Prove (Verilator grades it)
 -> feedback -> repeat, keeping the best design until it stops improving.
