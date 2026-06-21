@@ -77,6 +77,18 @@ def grade_opt_remote(candidate_rtl: str, task) -> dict:
     return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
 
 
+@app.function(image=grader_image, timeout=300)
+def synth_cells_remote(rtl: str, top_module: str) -> int:
+    """Diagnostic: Yosys post-synth cell count for a raw RTL string (no equivalence).
+
+    A task-curation tool — quantify a design's *headroom* by synthesizing a bloated
+    baseline and its tight equivalent and comparing cells.
+    """
+    from cologic.grader.ppa import synth_cells
+
+    return synth_cells(rtl, top_module).cells
+
+
 @app.function(image=harness_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=1200)
 def optimize_remote(task, model: str, n_candidates: int, temperature: float,
                     max_repair_rounds: int) -> dict:
@@ -409,6 +421,49 @@ def flywheel_run(
     print(f"\nbaseline={r['baseline_cells']} cells -> best={r['best_cells']} cells "
           f"({imp_s})  plateaued={r['plateaued']}")
     print("\n--- best RTL ---\n" + r["best_rtl"] + "\n")
+
+
+@app.local_entrypoint()
+def headroom():
+    """Probe which design patterns retain post-synth headroom (task-curation spike).
+
+    Each pair is a bloated baseline + a hand-written tight EQUIVALENT. A large
+    baseline->tight cell gap means real headroom an optimizer could capture even
+    after full Yosys synth. Usage:  modal run modal_app.py::headroom
+    """
+    # (name, top, baseline_rtl, tight_rtl)  — same function, different structure.
+    probes = [
+        # Combinational resource sharing under a mutually-exclusive select: the
+        # baseline instantiates two multipliers; the tight form shares one and
+        # muxes the operands. Yosys `share` is NOT in the default synth recipe.
+        ("share_mul", "share_mul",
+         "module share_mul(input [7:0] a, input [7:0] b, input [7:0] c, input [7:0] d, input s, output [15:0] y);\n"
+         "  assign y = s ? (a * b) : (c * d);\nendmodule\n",
+         "module share_mul(input [7:0] a, input [7:0] b, input [7:0] c, input [7:0] d, input s, output [15:0] y);\n"
+         "  assign y = (s ? a : c) * (s ? b : d);\nendmodule\n"),
+        # Same idea with adders (smaller operator -> smaller gap).
+        ("share_add", "share_add",
+         "module share_add(input [15:0] a, input [15:0] b, input [15:0] c, input [15:0] d, input s, output [15:0] y);\n"
+         "  assign y = s ? (a + b) : (c + d);\nendmodule\n",
+         "module share_add(input [15:0] a, input [15:0] b, input [15:0] c, input [15:0] d, input s, output [15:0] y);\n"
+         "  assign y = (s ? a : c) + (s ? b : d);\nendmodule\n"),
+        # Control: redundant duplicated combinational expr (abc should kill it -> ~0 gap).
+        ("redundant", "redundant",
+         "module redundant(input [7:0] a, input [7:0] b, output [7:0] y);\n"
+         "  assign y = (a + b) + (a + b) - (a + b);\nendmodule\n",
+         "module redundant(input [7:0] a, input [7:0] b, output [7:0] y);\n"
+         "  assign y = a + b;\nendmodule\n"),
+    ]
+    names = [p[0] for p in probes]
+    base = list(synth_cells_remote.map([p[2] for p in probes], [p[1] for p in probes]))
+    tight = list(synth_cells_remote.map([p[3] for p in probes], [p[1] for p in probes]))
+
+    print(f"\n{'design':<12} {'baseline':>9} {'tight':>7} {'savings':>9}")
+    print("-" * 42)
+    for name, b, t in zip(names, base, tight):
+        save = f"{(b - t) / b * 100:+.1f}%" if b else "n/a"
+        print(f"{name:<12} {b:>9} {t:>7} {save:>9}")
+    print()
 
 
 @app.local_entrypoint()
