@@ -70,22 +70,19 @@ def list_models(substr: str = "") -> list[str]:
 
 
 @app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=900)
-def sample_remote(task, n: int, model: str, max_tokens: int | None) -> list[dict]:
-    """Sample `n` completions for one task from Fireworks, inside Modal.
+def sample_remote(task, model: str, max_tokens: int | None, temperature: float) -> dict:
+    """One completion from Fireworks (budget auto-grows on truncation).
 
-    Budget resolves per-task (override > Task.max_tokens > env > default) and
-    auto-grows on truncation. Each item is {text, finish_reason, budget}.
+    Mapped per (task, sample) so every completion is an independent Modal input —
+    maximum parallelism, and no single container runs n calls in series (which
+    could blow the timeout). Returns {text, finish_reason, budget}.
     """
     from rl_hdl.inference import sample_until_complete
 
-    temperature = 0.0 if n == 1 else 0.7  # greedy for a stable n=1 baseline read
-    out = []
-    for _ in range(n):
-        text, finish, budget = sample_until_complete(
-            task, model=model, temperature=temperature, max_tokens=max_tokens
-        )
-        out.append({"text": text, "finish_reason": finish, "budget": budget})
-    return out
+    text, finish, budget = sample_until_complete(
+        task, model=model, temperature=temperature, max_tokens=max_tokens
+    )
+    return {"text": text, "finish_reason": finish, "budget": budget}
 
 
 @app.local_entrypoint()
@@ -120,14 +117,17 @@ def main(
 
         model = model_id()
         override = max_tokens or None  # 0 sentinel -> per-task/env resolution + auto-grow
+        temperature = 0.0 if n == 1 else 0.7  # greedy for a stable n=1 read, else sample
         budget_desc = f"override={override}" if override else "per-task/auto-grow"
-        print(f"sampling n={n} from {model} (max_tokens={budget_desc}) for {len(tasks)} {split} tasks (in Modal) ...")
-        per_task = list(sample_remote.map(
-            tasks, [n] * len(tasks), [model] * len(tasks), [override] * len(tasks)
+        jobs = [t for t in tasks for _ in range(n)]  # one Modal input per completion
+        print(f"sampling n={n} ({len(jobs)} completions) from {model} "
+              f"(max_tokens={budget_desc}, temp={temperature}) for {len(tasks)} {split} tasks (in Modal) ...")
+        dicts = list(sample_remote.map(
+            jobs, [model] * len(jobs), [override] * len(jobs), [temperature] * len(jobs)
         ))
-        budgets = [s["budget"] for lst in per_task for s in lst]
+        budgets = [d["budget"] for d in dicts]
         print(f"token budgets used: min={min(budgets)} max={max(budgets)} (auto-grew on truncation)")
-        samples = [(t, s["text"], s["finish_reason"]) for t, lst in zip(tasks, per_task) for s in lst]
+        samples = [(t, d["text"], d["finish_reason"]) for t, d in zip(jobs, dicts)]
 
     pairs = [(t, txt) for t, txt, _ in samples]
     results = list(grade_remote.map([c for _, c in pairs], [t for t, _ in pairs]))
