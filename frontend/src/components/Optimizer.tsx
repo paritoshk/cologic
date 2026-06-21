@@ -68,7 +68,7 @@ export function Optimizer() {
   return (
     <section id="optimizer" className="mx-auto max-w-6xl px-6 py-16 scroll-mt-20">
       <div className="font-[family-name:var(--font-jet)] text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-        live · soren&apos;s grader (Verilator + Yosys)
+        live · verifiable grader (Verilator + Yosys)
       </div>
       <h2 className="font-[family-name:var(--font-instrument)] text-4xl mt-2 mb-2">
         Optimize a real design
