@@ -1,0 +1,36 @@
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# HDL sim artifacts
+*.vvp
+dump.vcd
+
+# Build output
+dist/
+build/
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# HDL build artifacts
+*.vcd
+*.vvp
+*.out
+work/
+.gstack/

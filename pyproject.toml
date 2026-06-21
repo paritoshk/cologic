@@ -1,0 +1,19 @@
+[project]
+name = "cologic"
+version = "0.1.0"
+description = "Self-learning chip-design agent — verifiable-reward core"
+requires-python = ">=3.10"
+dependencies = []   # core harness is stdlib-only; iverilog is the external dep
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+cologic = "cologic.__main__:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["cologic"]
