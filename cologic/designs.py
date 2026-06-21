@@ -144,6 +144,34 @@ SHARE_MUL_SHARED = """module share_mul(input [7:0] a, input [7:0] b, input [7:0]
 endmodule
 """
 
-OPT_TASKS: list[Task] = [mul8, mux4, popcount8, share_mul]
+# --- share_add: HELD-OUT cousin of share_mul (unshared adders instead of multipliers).
+# Same resource-sharing optimization, structurally novel vs the public set — used to
+# measure whether an evolved harness GENERALIZES, not just memorizes the train designs. ---
+SHARE_ADD_BASELINE = """module share_add(input [15:0] a, input [15:0] b, input [15:0] c, input [15:0] d,
+                 input s, output [15:0] y);
+  wire [15:0] sum_ab = a + b;
+  wire [15:0] sum_cd = c + d;
+  assign y = s ? sum_ab : sum_cd;
+endmodule
+"""
+
+share_add = Task(
+    task_id="opt_share_add",
+    top_module="share_add",
+    spec="Optimize this datapath for gate count while preserving its function "
+         "(it selects one of two 16-bit sums).",
+    interface=[
+        Port("a", "input", 16), Port("b", "input", 16), Port("c", "input", 16),
+        Port("d", "input", 16), Port("s", "input", 1), Port("y", "output", 16),
+    ],
+    reference_rtl=SHARE_ADD_BASELINE,
+    n_vectors=256,
+    held_out=True,
+    tags=["comb", "arith", "headroom:resource-share"],
+)
+
+OPT_TASKS: list[Task] = [mul8, mux4, popcount8, share_mul, share_add]
+TRAIN_OPT_TASKS: list[Task] = [t for t in OPT_TASKS if not t.held_out]
+HELDOUT_OPT_TASKS: list[Task] = [t for t in OPT_TASKS if t.held_out]
 BY_ID = {t.task_id: t for t in OPT_TASKS}
 
