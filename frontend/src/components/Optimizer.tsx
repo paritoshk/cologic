@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CodeBox } from "./CodeBox";
+import { Lattice } from "./Lattice";
 import {
   runOptimize,
   SAMPLE_RTL,
@@ -67,7 +68,7 @@ export function Optimizer() {
   return (
     <section id="optimizer" className="mx-auto max-w-6xl px-6 py-16 scroll-mt-20">
       <div className="font-[family-name:var(--font-jet)] text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-        live · soren&apos;s grader (Verilator + Yosys)
+        live · Kimi K2.7 Code (Fireworks) · verifiable grader (Verilator + Yosys)
       </div>
       <h2 className="font-[family-name:var(--font-instrument)] text-4xl mt-2 mb-2">
         Optimize a real design
@@ -75,7 +76,7 @@ export function Optimizer() {
       <p className="text-foreground/70 max-w-prose mb-8">
         Edit the Verilog or upload a <code className="font-[family-name:var(--font-jet)]">.v</code> file,
         give a goal, and run. The backend rewrites it and reports the gate-count reduction with an
-        equivalence proof — measured in gate count, not estimates.
+        equivalence proof, measured in gate count, not estimates.
       </p>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -137,9 +138,12 @@ export function Optimizer() {
 
         {/* output */}
         <div className="space-y-4">
+          {running && !outcome && (
+            <Lattice live caption={log || "agents optimizing…"} />
+          )}
           {!outcome && !running && (
             <div className="rounded-lg border border-dashed border-border bg-card/50 p-8 text-center text-muted-foreground font-[family-name:var(--font-jet)] text-sm">
-              results appear here — gate count, equivalence, optimized Verilog.
+              results appear here: gate count, equivalence, optimized Verilog.
             </div>
           )}
           {outcome && (

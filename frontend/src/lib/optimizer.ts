@@ -1,4 +1,4 @@
-// Client for Soren's live RTL optimizer backend (Modal). Real gate-count
+// Client for the live RTL optimizer backend (Modal). Real gate-count
 // reductions: upload Verilog → agents rewrite it → equivalence-checked result.
 
 export const OPT_BASE = "https://yc-hack27--rl-hdl-web.modal.run";
