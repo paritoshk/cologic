@@ -209,16 +209,27 @@ function renderFooter(d){
     `baseline=${d.baseline_model||"?"} · cologic=${d.cologic_model||d.model||"?"} · sampled via HUD gateway, graded with Verilator`;
 }
 
-fetch('./data.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+const ENDPOINT="https://yc-hack27--cologic-web-web.modal.run/state";
+function paint(rec){
+  // accept both the nested live record {benchmark,foundry} and a flat benchmark dict
+  const d = rec.benchmark || rec;
   document.getElementById('legBase').textContent=shortModel(d.baseline_model)||"baseline";
   document.getElementById('legCol').textContent=shortModel(d.cologic_model)||"cologic";
   document.getElementById('thBase').textContent=shortModel(d.baseline_model)||"baseline";
   document.getElementById('thCol').textContent=shortModel(d.cologic_model)||"cologic";
   renderStatus(d); renderStats(d); renderBars(d); renderTable(d); renderFooter(d);
-}).catch(e=>{
-  document.getElementById('status').innerHTML=
-    `<span style="background:#FEE2E2;color:#991B1B;padding:3px 9px;border-radius:5px">failed to load data.json — ${e}</span>`;
-});
+}
+async function load(){
+  try{
+    const c=new AbortController(); const to=setTimeout(()=>c.abort(),4000);
+    const r=await fetch(ENDPOINT,{signal:c.signal,cache:'no-store'}); clearTimeout(to);
+    if(!r.ok) throw 0; paint(await r.json()); return;
+  }catch(e){}
+  try{ paint(await (await fetch('./data.json',{cache:'no-store'})).json()); }
+  catch(e){ document.getElementById('status').innerHTML=
+    `<span style="background:#FEE2E2;color:#991B1B;padding:3px 9px;border-radius:5px">failed to load data — ${e}</span>`; }
+}
+load();
 </script>
 </body>
 </html>

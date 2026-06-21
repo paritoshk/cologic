@@ -1,62 +1,98 @@
 {
+  "updated_at": "",
   "source": "baseline+cologic eval",
-  "baseline_model": "Qwen/Qwen3-8B",
-  "cologic_model": "cologic-rtl",
-  "model": "cologic-rtl",
-  "gate": 0.6,
-  "baseline_pass_at_1": 0.267,
-  "cologic_pass_at_1": 0.3,
-  "uplift": 0.033,
-  "n_per_task": 5,
-  "per_task": [
-    {
-      "id": "ho_mux2_w16",
-      "short": "mux2_w16",
-      "baseline": 1.0,
-      "cologic": 1.0,
-      "bp": "5/5",
-      "cp": "5/5"
-    },
-    {
-      "id": "ho_cmp4",
-      "short": "cmp4",
-      "baseline": 0.0,
-      "cologic": 0.0,
-      "bp": "0/5",
-      "cp": "0/5"
-    },
-    {
-      "id": "ho_popcount16",
-      "short": "popcount16",
-      "baseline": 0.0,
-      "cologic": 0.0,
-      "bp": "0/5",
-      "cp": "0/5"
-    },
-    {
-      "id": "ho_max2",
-      "short": "max2",
-      "baseline": 0.4,
-      "cologic": 0.6,
-      "bp": "2/5",
-      "cp": "3/5"
-    },
-    {
-      "id": "ho_dec2to4",
-      "short": "dec2to4",
-      "baseline": 0.0,
-      "cologic": 0.0,
-      "bp": "0/5",
-      "cp": "0/5"
-    },
-    {
-      "id": "ho_gray2bin8",
-      "short": "gray2bin8",
-      "baseline": 0.2,
-      "cologic": 0.2,
-      "bp": "1/5",
-      "cp": "1/5"
-    }
-  ],
-  "epochs": null
+  "benchmark": {
+    "source": "baseline+cologic eval",
+    "baseline_model": "Qwen/Qwen3-8B",
+    "cologic_model": "cologic-rtl",
+    "model": "cologic-rtl",
+    "gate": 0.6,
+    "baseline_pass_at_1": 0.267,
+    "cologic_pass_at_1": 0.3,
+    "uplift": 0.033,
+    "n_per_task": 5,
+    "per_task": [
+      {
+        "id": "ho_mux2_w16",
+        "short": "mux2_w16",
+        "baseline": 1.0,
+        "cologic": 1.0,
+        "bp": "5/5",
+        "cp": "5/5"
+      },
+      {
+        "id": "ho_cmp4",
+        "short": "cmp4",
+        "baseline": 0.0,
+        "cologic": 0.0,
+        "bp": "0/5",
+        "cp": "0/5"
+      },
+      {
+        "id": "ho_popcount16",
+        "short": "popcount16",
+        "baseline": 0.0,
+        "cologic": 0.0,
+        "bp": "0/5",
+        "cp": "0/5"
+      },
+      {
+        "id": "ho_max2",
+        "short": "max2",
+        "baseline": 0.4,
+        "cologic": 0.6,
+        "bp": "2/5",
+        "cp": "3/5"
+      },
+      {
+        "id": "ho_dec2to4",
+        "short": "dec2to4",
+        "baseline": 0.0,
+        "cologic": 0.0,
+        "bp": "0/5",
+        "cp": "0/5"
+      },
+      {
+        "id": "ho_gray2bin8",
+        "short": "gray2bin8",
+        "baseline": 0.2,
+        "cologic": 0.2,
+        "bp": "1/5",
+        "cp": "1/5"
+      }
+    ],
+    "epochs": null
+  },
+  "foundry": {
+    "design": "tensor-mac / systolic_8\u00d78",
+    "objective": "power",
+    "pdk": "sky130hd",
+    "epoch": 1284,
+    "power_rel": 142,
+    "compute_pct": 71,
+    "clock_mhz": 910,
+    "sim_status": "PASS",
+    "demo": true,
+    "agents": [
+      {
+        "role": "PLAN",
+        "level": 2,
+        "target": "PE[1][3]",
+        "verb": "probing"
+      },
+      {
+        "role": "FORGE",
+        "level": 3,
+        "target": "PE[2][2]",
+        "verb": "sampling"
+      },
+      {
+        "role": "PROVE",
+        "level": 4,
+        "target": "PE[5][5]",
+        "verb": "sampling"
+      }
+    ],
+    "rtl": "// systolic_array.v \u2014 8x8 output-stationary INT8\n// FORGE \u00b7 objective: power \u00b7 pdk: sky130hd\n`timescale 1ns/1ps\n`default_nettype none\n\nmodule systolic_array #(\n  parameter int N  = 8,        // array dim\n  parameter int IW = 8,        // operand width\n  parameter int OW = 2*IW + 4  // 20-bit accumulator\n)(\n  input  wire                  clk,\n  input  wire                  rst_n,\n  input  wire                  in_valid,\n  input  wire signed [IW-1:0]  a_row [N],\n  input  wire signed [IW-1:0]  b_col [N],\n  output reg                   out_valid,\n  output reg  signed [OW-1:0]  c_mac [N][N]\n);\n  // A flows west->east, B flows north->south\n  logic signed [IW-1:0] a_h [N][N+1];\n  logic signed [IW-1:0] b_v [N+1][N];\n\n  genvar i, j;\n  generate\n    for (i = 0; i < N; i++) begin : g_row\n      for (j = 0; j < N; j++) begin : g_col\n        pe #(.IW(IW), .OW(OW)) u_pe (\n          .clk (clk), .rst_n (rst_n), .en (in_valid),\n          .a_in (a_h[i][j]),  .a_out (a_h[i][j+1]),\n          .b_in (b_v[i][j]),  .b_out (b_v[i+1][j]),\n          .c_acc(c_mac[i][j]) );\n      end\n    end\n  endgenerate\nendmodule\n"
+  }
 }
