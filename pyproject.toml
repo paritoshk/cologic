@@ -8,6 +8,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 eval = ["openai>=1.0", "modal>=0.64"]
+opt = ["ortools>=9.0"]   # cologic.optimize: LP resource allocation (GLOP)
 
 [build-system]
 requires = ["hatchling"]
