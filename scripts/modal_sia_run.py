@@ -198,15 +198,41 @@ def sia_run_remote(
 
     run_dir = work / "runs" / f"run_{run_id}"
     generations = []
+    artifacts: dict[str, str] = {}
+    CAP = 200_000
+
+    def _grab(p: Path, rel: str) -> None:
+        if p.exists():
+            artifacts[rel] = p.read_text(errors="replace")[:CAP]
+
     if run_dir.exists():
-        for gdir in sorted(run_dir.glob("gen_*")):
+        _grab(run_dir / "context.md", "context.md")
+        gen_dirs = sorted(run_dir.glob("gen_*"))
+        for gdir in gen_dirs:
             rj = gdir / "results.json"
             generations.append({
                 "gen": gdir.name,
                 "results": json.loads(rj.read_text()) if rj.exists() else None,
                 "has_target_agent": (gdir / "target_agent.py").exists(),
             })
-    return {"returncode": rc, "stdout_tail": "".join(lines)[-6000:], "generations": generations}
+            _grab(gdir / "target_agent.py", f"{gdir.name}/target_agent.py")
+            _grab(gdir / "results.json", f"{gdir.name}/results.json")
+            _grab(gdir / "agent_execution.json", f"{gdir.name}/agent_execution.json")
+            _grab(gdir / "improvement.md", f"{gdir.name}/improvement.md")
+        # Diff the harness the feedback agent evolved across the first two generations.
+        if len(gen_dirs) >= 2:
+            import difflib
+            a, b = gen_dirs[0] / "target_agent.py", gen_dirs[1] / "target_agent.py"
+            if a.exists() and b.exists():
+                diff = difflib.unified_diff(
+                    a.read_text().splitlines(), b.read_text().splitlines(),
+                    f"{gen_dirs[0].name}/target_agent.py", f"{gen_dirs[1].name}/target_agent.py",
+                    lineterm="")
+                artifacts["target_agent_gen1_to_gen2.diff"] = "\n".join(diff)[:CAP]
+
+    artifacts["run_log_tail.txt"] = "".join(lines)[-20000:]
+    return {"returncode": rc, "stdout_tail": "".join(lines)[-6000:],
+            "generations": generations, "artifacts": artifacts}
 
 
 @app.function(image=sia_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=1800, cpu=2.0)
@@ -279,6 +305,29 @@ def main(
         print(f"{g['gen']:<10} {res.get('mean_reward', 0):>12.4f} {ai_s:>15} {eq:>8}")
     if r["returncode"] != 0:
         print(f"\n[SIA] exited rc={r['returncode']} — output tail:\n" + r["stdout_tail"][-2000:])
+
+    # Capture the evidence locally under artifacts/.
+    from pathlib import Path
+    out_dir = Path("artifacts") / f"sia_run_{run_id}"
+    for rel, content in (r.get("artifacts") or {}).items():
+        dest = out_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content)
+    rows = "\n".join(
+        f"| {g['gen']} | {(g['results'] or {}).get('mean_reward', 0):.4f} | "
+        f"{((g['results'] or {}).get('mean_area_improvement') or 0) * 100:+.1f}% | "
+        f"{(g['results'] or {}).get('n_equivalent', '?')}/{(g['results'] or {}).get('n_total', '?')} |"
+        for g in r["generations"])
+    (out_dir / "README.md").write_text(
+        f"# SIA harness-lever run {run_id}\n\n"
+        f"meta={meta_model} · target={target_model} · max_gen={max_gen} · "
+        f"n_candidates={n_candidates}\n\n"
+        f"Footprint per generation (official score from evaluate.py = deployed verifier):\n\n"
+        f"| generation | mean_reward | mean_area_improvement | equivalent |\n"
+        f"|---|---|---|---|\n{rows}\n\n"
+        f"Artifacts: per-generation `target_agent.py` (the evolved harness), `results.json`, "
+        f"`agent_execution.json`, `context.md`, and `target_agent_gen1_to_gen2.diff`.\n")
+    print(f"\nwrote evidence to {out_dir}/ ({len(r.get('artifacts') or {})} files)")
 
 
 @app.local_entrypoint()

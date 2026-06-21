@@ -43,11 +43,19 @@ def _log(tag: str, msg: str) -> None:
     print(f"[{tag}] {msg}", flush=True)
 
 
+# ===========================================================================
+# IF YOU ARE REVISING THIS AGENT: grading goes through the DEPLOYED verifier
+# (`_grader` = grade_opt_remote) and NOTHING ELSE. There is no local Verilator or
+# Yosys here. DO NOT replace this with an LLM equivalence check, an area estimate,
+# or a "grader unavailable -> assume equivalent" fallback — the official score is
+# recomputed by evaluate.py with this same verifier, so any guess scores nothing.
+# Keep grade() as the only way candidates are checked. Fail loudly on errors.
+# ===========================================================================
 def grade(rtl: str, task, label: str = "") -> SimpleNamespace:
     # A grade IS a simulation: the deployed verifier runs Verilator (equivalence)
     # then Yosys (gate count). Log the trigger and the footprint it reports back.
-    _log("SIM", f"{task.task_id} {label}: verifying on Modal grader (Verilator + Yosys)")
-    out = _grader.remote(rtl, task)  # {"reward", "info", "task_id"}
+    _log("SIM", f"{task.task_id} {label}: verifying on the deployed Modal grader (Verilator + Yosys)")
+    out = _grader.remote(rtl, task)  # {"reward", "info", "task_id"} — raises on failure (no fallback)
     r = SimpleNamespace(reward=out["reward"], info=out["info"])
     i = r.info
     cells = (f"{i.get('ref_cells')}->{i.get('cand_cells')}"
