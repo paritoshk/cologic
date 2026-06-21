@@ -1,28 +1,23 @@
 {
   "designs": [
     {
-      "id": "mul8",
-      "file": "designs/mul8.v",
-      "n_vectors": 256,
-      "seed": 1
-    },
-    {
-      "id": "mux4",
-      "file": "designs/mux4.v",
-      "n_vectors": 256,
-      "seed": 1
-    },
-    {
-      "id": "popcount8",
-      "file": "designs/popcount8.v",
-      "n_vectors": 256,
-      "seed": 1
-    },
-    {
-      "id": "share_mul",
-      "file": "designs/share_mul.v",
-      "n_vectors": 256,
-      "seed": 1
+      "id": "tt_um_tpu",
+      "file": "designs/tt_um_tpu.v",
+      "top_module": "tt_um_tpu",
+      "spec": "Optimize this 2x2 signed matrix-multiply accelerator for gate count while preserving its exact cycle-accurate I/O behaviour (it loads matrices A and B and outputs a selected element of A*B).",
+      "stimulus_file": "designs/tt_um_tpu_stim.v",
+      "n_vectors": 64,
+      "seed": 6,
+      "ports": [
+        {"name": "ui_in", "direction": "input", "width": 8},
+        {"name": "uo_out", "direction": "output", "width": 8},
+        {"name": "uio_in", "direction": "input", "width": 8},
+        {"name": "uio_out", "direction": "output", "width": 8},
+        {"name": "uio_oe", "direction": "output", "width": 8},
+        {"name": "ena", "direction": "input", "width": 1},
+        {"name": "clk", "direction": "input", "width": 1},
+        {"name": "rst_n", "direction": "input", "width": 1}
+      ]
     }
   ]
 }
