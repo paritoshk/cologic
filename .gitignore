@@ -39,8 +39,8 @@ records.jsonl
 *.jsonl
 !fireworks_rft/dataset.jsonl
 
-# vendored datasets (raw clone)
-data/
+# vendored datasets (raw clone) — root-anchored so task dirs (e.g. sia_task/.../data) aren't swallowed
+/data/
 *_selftest.json
 ve_*.json
 

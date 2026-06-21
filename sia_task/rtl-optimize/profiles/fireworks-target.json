@@ -1,0 +1,7 @@
+{
+  "profile_id": "fireworks-target",
+  "name": "Cologic policy on Fireworks",
+  "model": "accounts/sorenmadsen/deployments/tpwhh4w8",
+  "provider_id": "fireworks",
+  "agent_reference": "default"
+}
