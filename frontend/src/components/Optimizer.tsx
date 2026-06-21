@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CodeBox } from "./CodeBox";
+import { useOptOutcome } from "@/lib/opt-context";
 import {
   runOptimize,
   SAMPLE_RTL,
   SAMPLE_NAME,
   DEFAULT_TOKEN,
-  type OptOutcome,
 } from "@/lib/optimizer";
 
 export function Optimizer() {
@@ -21,15 +21,11 @@ export function Optimizer() {
   const [token, setToken] = useState(DEFAULT_TOKEN);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string>("");
-  const [outcome, setOutcome] = useState<OptOutcome | null>(null);
+  const { outcome, setOutcome } = useOptOutcome();
   const [error, setError] = useState<string>("");
   const abort = useRef<AbortController | null>(null);
 
   async function run() {
-    if (!token.trim()) {
-      setError("enter your X-RLHDL-Token to run a live optimization");
-      return;
-    }
     setRunning(true);
     setError("");
     setOutcome(null);
