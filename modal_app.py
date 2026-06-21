@@ -184,6 +184,57 @@ def flywheel_remote(task, model: str, n_candidates: int, temperature: float,
     }
 
 
+@app.function(image=harness_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=3600)
+def measure_remote(task, model: str, n_candidates: int, temperature: float,
+                   max_repair_rounds: int, max_generations: int, patience: int) -> dict:
+    """The headline gap: baseline vs zero-shot vs full-loop on one design.
+
+    Same Fireworks policy and same immutable grader (Verilator equivalence + Yosys
+    PPA) for every arm, so `gap_cells` is exactly what the search/repair machinery
+    bought beyond a single zero-shot sample. The design's optimum is never supplied.
+    """
+    import time
+
+    from harness import FlywheelConfig, HarnessConfig, default_model_fn, format_gap, measure_gap
+
+    for _ in range(40):  # warm the deployment through scale-from-zero
+        try:
+            default_model_fn([{"role": "user", "content": "ping"}], model=model,
+                             temperature=0.0, max_tokens=1)
+            break
+        except Exception as e:  # noqa: BLE001
+            if "scal" in str(e).lower() or "503" in str(e):
+                time.sleep(15)
+                continue
+            raise
+
+    def model_fn(messages, *, temperature, max_tokens):
+        return default_model_fn(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+
+    res = measure_gap(
+        task, model_fn=model_fn,
+        loop_config=FlywheelConfig(
+            max_generations=max_generations, patience=patience,
+            harness=HarnessConfig(n_candidates=n_candidates, temperature=temperature,
+                                  max_repair_rounds=max_repair_rounds),
+        ),
+    )
+
+    def arm(a) -> dict:
+        return {"name": a.name, "cells": a.cells, "reward": round(a.reward, 4),
+                "equivalent": a.equivalent, "rtl": a.rtl}
+
+    return {
+        "task_id": res.task_id,
+        "baseline_cells": res.baseline_cells,
+        "zero_shot": arm(res.zero_shot),
+        "loop": arm(res.loop),
+        "gap_cells": res.gap_cells,
+        "loop_beats_zero_shot": res.loop_beats_zero_shot,
+        "table": format_gap(res),
+    }
+
+
 @app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")])
 def list_models(substr: str = "") -> list[str]:
     """Return Fireworks model ids visible to this account (optionally filtered)."""
@@ -421,6 +472,43 @@ def flywheel_run(
     print(f"\nbaseline={r['baseline_cells']} cells -> best={r['best_cells']} cells "
           f"({imp_s})  plateaued={r['plateaued']}")
     print("\n--- best RTL ---\n" + r["best_rtl"] + "\n")
+
+
+@app.local_entrypoint()
+def measure_run(
+    design: str = "tpu_matmul2x2",
+    model: str = "accounts/fireworks/models/kimi-k2p7-code",
+    n: int = 8,
+    temperature: float = 0.9,
+    repair: int = 2,
+    gens: int = 8,
+    patience: int = 3,
+):
+    """Headline experiment: baseline vs zero-shot vs full-loop on a REAL design.
+
+    Defaults to `tpu_matmul2x2` — the real `tt_um_tpu` 2x2 matmul accelerator, whose
+    optimum we did not author. The number that matters is `gap_cells`: cells the
+    loop saved beyond a single zero-shot sample, with Yosys as the only judge.
+
+    Usage:  modal run modal_app.py::measure_run
+            modal run modal_app.py::measure_run --design share_mul --gens 6
+    """
+    from cologic.designs import BY_ID, CLOCKED_OPT_TASKS
+
+    lookup = dict(BY_ID)
+    lookup.update({t.task_id: t for t in CLOCKED_OPT_TASKS})
+    lookup.update({t.task_id.removeprefix("opt_"): t for t in lookup.values()})
+    task = lookup.get(f"opt_{design}") or lookup.get(design)
+    if task is None:
+        raise SystemExit(f"unknown design {design!r}; known: {sorted(lookup)}")
+
+    print(f"\nmeasure on {task.task_id} ({task.top_module}) | model={model} "
+          f"| n={n} temp={temperature} repair={repair} gens={gens} patience={patience}\n")
+
+    r = measure_remote.remote(task, model, n, temperature, repair, gens, patience)
+    print(r["table"])
+    if r["loop_beats_zero_shot"]:
+        print("--- loop's winning RTL (beyond zero-shot) ---\n" + r["loop"]["rtl"] + "\n")
 
 
 @app.local_entrypoint()
