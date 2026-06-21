@@ -39,6 +39,34 @@ def model_id() -> str:
     return os.environ.get("RLHDL_MODEL", DEFAULT_MODEL)
 
 
+# HUD inference gateway (OpenAI-compatible). One HUD_API_KEY reaches every gateway
+# model (Qwen, Gemma, gpt-oss, ...). This is the inference surface for the
+# Plan->Forge loop, since the Fireworks account has no deployed models.
+HUD_GATEWAY_URL = "https://inference.beta.hud.ai/v1"
+
+
+def gateway_model_fn(model: str, *, temperature: float = 0.7, max_tokens: int = 2048):
+    """Return a ModelFn (messages -> completion text) routed through the HUD gateway.
+
+    Wires agents.loop's Plan/Forge to a gateway model by id, e.g.
+    Forge = gateway_model_fn("Qwen/Qwen3-8B"); Plan = gateway_model_fn("gemma-4-31b-it").
+    """
+    from openai import OpenAI
+
+    key = os.environ.get("HUD_API_KEY")
+    if not key:
+        raise RuntimeError("set HUD_API_KEY to use the HUD gateway.")
+    client = OpenAI(api_key=key, base_url=os.environ.get("HUD_GATEWAY_URL", HUD_GATEWAY_URL))
+
+    def _fn(messages: list[dict]) -> str:
+        resp = client.chat.completions.create(
+            model=model, messages=messages, temperature=temperature, max_tokens=max_tokens
+        )
+        return resp.choices[0].message.content or ""
+
+    return _fn
+
+
 def complete(
     task: Task,
     *,
