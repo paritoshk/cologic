@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cologic — verifiable-reward RL for RTL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAF8F4; --ink:#1C1917; --line:#E2DCCB; --line2:#EDE8DA;
+    --card:#fff; --mut:#78716C; --mut2:#A8A29E;
+    --base:#C9C0A8; --base-ink:#8a8073;
+    --col:#3FA34D; --col-deep:#2c7a37; --col-bright:#7BE05A; --col-dark:#06210c;
+    --gate:#B45309;
+    --serif:'Instrument Serif',Georgia,serif;
+    --sans:Inter,system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg)}
+  body{font-family:var(--sans);color:var(--ink);font-feature-settings:"ss01","cv11";-webkit-font-smoothing:antialiased;line-height:1.5}
+  a{color:var(--col-deep)}
+  .wrap{max-width:880px;margin:0 auto;padding:0 24px 96px}
+  .mono{font-family:var(--mono)}
+  .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+  .fignote{font-size:11.5px;color:var(--mut);line-height:1.6;margin-top:10px;padding-top:10px;border-top:1px solid var(--line2)}
+  .fignote b{color:#44403C;font-family:var(--mono);font-weight:600}
+  @media print{ body{background:#fff} .noprint{display:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <header style="display:flex;align-items:center;gap:13px;padding:26px 0 20px;border-bottom:1px solid var(--line)">
+    <div style="width:36px;height:36px;border-radius:7px;background:linear-gradient(135deg,var(--col),var(--col-deep));display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:23px;color:var(--col-dark);font-weight:700">C</div>
+    <div style="flex:1">
+      <div style="font-family:var(--serif);font-size:25px;line-height:1.05">Cologic on <span style="font-style:italic">ho-bench</span></div>
+      <div class="mono" style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin-top:3px">RTL synthesis · pass@1 · verifiable reward</div>
+    </div>
+    <a class="mono" href="./index.html" style="font-size:11px;color:var(--mut2);text-decoration:none;margin-right:14px">← foundry</a>
+    <a class="mono" href="./die.html" style="font-size:11px;color:var(--mut2);text-decoration:none">die view →</a>
+  </header>
+
+  <!-- HERO -->
+  <section style="padding:34px 0 6px">
+    <div class="eyebrow">reinforcement learning for RTL synthesis</div>
+    <h1 style="font-family:var(--serif);font-weight:400;font-size:34px;line-height:1.12;margin:10px 0 12px;max-width:30ch">
+      Model-written Verilog, graded by compiling and simulating it against a reference testbench.
+    </h1>
+    <p style="font-size:15px;color:#44403C;max-width:62ch;margin:0">
+      Cologic samples Verilog from a policy model and grades each sample with the Verilator simulator.
+      The reward is the fraction of testbench vectors whose outputs match the reference. The benchmark
+      below reports pass@1 on the held-out tasks.
+    </p>
+  </section>
+
+  <!-- DATA-STATUS BANNER (filled by JS) -->
+  <div id="status" class="mono" style="margin-top:18px;font-size:11px"></div>
+
+  <!-- HEADLINE STATS -->
+  <section id="stats" style="display:flex;gap:14px;padding:18px 0 8px;flex-wrap:wrap"></section>
+
+  <!-- FIGURE 1: per-task bars -->
+  <section class="card" style="margin-top:24px;padding:20px 22px 16px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:14px;font-weight:600">Per-task functional correctness</div>
+      <div style="display:flex;gap:16px" class="mono">
+        <span style="display:flex;align-items:center;gap:6px;font-size:11px;color:#57534E"><span style="width:11px;height:11px;border-radius:2px;background:var(--base)"></span><span id="legBase">baseline</span></span>
+        <span style="display:flex;align-items:center;gap:6px;font-size:11px;color:#57534E"><span style="width:11px;height:11px;border-radius:2px;background:var(--col)"></span><span id="legCol">cologic</span></span>
+      </div>
+    </div>
+    <svg id="bars" viewBox="0 0 760 320" style="width:100%;height:auto;display:block;font-family:var(--mono)"></svg>
+    <div class="fignote">
+      <b>Fig. 1.</b> pass rate (fraction of n samples that compile <b>and</b> match the reference testbench) per ho-bench task,
+      baseline vs. Cologic. Whiskers: ±1 s.e. on the Cologic bar. <span id="fig1tail"></span>
+    </div>
+  </section>
+
+  <!-- METHODOLOGY (honest; replaces the old fabricated epoch curve) -->
+  <section class="card" style="margin-top:18px;padding:20px 22px">
+    <div style="font-size:14px;font-weight:600;margin-bottom:12px">How the reward is computed</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px">
+      <div><div class="eyebrow" style="color:var(--col-deep)">1 · sample</div><div style="font-size:13px;margin-top:5px;color:#44403C">Policy model writes a Verilog module for the task spec + interface.</div></div>
+      <div><div class="eyebrow" style="color:var(--col-deep)">2 · compile + simulate</div><div style="font-size:13px;margin-top:5px;color:#44403C">Verilator builds the candidate beside the golden reference and drives random vectors.</div></div>
+      <div><div class="eyebrow" style="color:var(--col-deep)">3 · score</div><div style="font-size:13px;margin-top:5px;color:#44403C">reward = 0.10·compiles + 0.90·(outputs matched / total). pass@1 counts only full matches.</div></div>
+    </div>
+    <div class="fignote">
+      <b>Measured today:</b> functional correctness (Verilator co-simulation). <b>Not yet wired into this view:</b>
+      power &amp; timing — real synthesis numbers exist in <span class="mono">cologic-verilog/</span> (Yosys gate count / logic depth)
+      but are not part of this benchmark, so no power figure is shown here. No learning curve is shown
+      because no per-epoch training run has been logged.
+    </div>
+  </section>
+
+  <!-- DATA TABLE (filled by JS) -->
+  <section class="card" style="margin-top:18px;overflow:hidden">
+    <div style="display:flex;padding:11px 18px;background:#F4F0E6;border-bottom:1px solid var(--line)" class="mono">
+      <span style="flex:1;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)">task</span>
+      <span style="width:110px;text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)" id="thBase">baseline</span>
+      <span style="width:110px;text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)" id="thCol">cologic</span>
+      <span style="width:74px;text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)">Δ</span>
+    </div>
+    <div id="rows"></div>
+    <div id="totals" style="display:flex;align-items:center;padding:12px 18px;background:#FBFAF6" class="mono"></div>
+  </section>
+
+  <div class="mono" id="footer" style="margin-top:20px;font-size:10.5px;color:var(--mut2);line-height:1.6"></div>
+
+</div>
+
+<script>
+const GREEN="#3FA34D", DEEP="#2c7a37", BASE="#C9C0A8", BASEINK="#8a8073", GATE="#B45309", MUT="#A8A29E";
+
+function fmt(x){ return (x).toFixed(2); }
+function pct(x){ return (x*100).toFixed(1); }
+function shortModel(m){ if(!m) return ""; return m.split("/").pop(); }
+
+function renderStats(d){
+  const upRel = d.baseline_pass_at_1>0 ? (d.uplift/d.baseline_pass_at_1*100) : 0;
+  const lifted = d.per_task.filter(t=>t.cologic>t.baseline).length;
+  const gate=d.gate ?? 0.60;
+  const clears=v=> v>=gate ? "clears gate ✓" : "below "+fmt(gate)+" gate";
+  const cell=(label,val,sub,opts={})=>`
+    <div style="flex:1;min-width:172px;background:${opts.bg||'#fff'};border:1px solid ${opts.border||'#E2DCCB'};border-radius:8px;padding:16px 18px">
+      <div class="mono" style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:${opts.lab||'#78716C'};margin-bottom:8px">${label}</div>
+      <div class="mono" style="font-size:32px;font-weight:700;color:${opts.num||'#78716C'};line-height:1">${val}</div>
+      <div style="font-size:11.5px;color:${opts.sub||'#A8A29E'};margin-top:4px">${sub}</div>
+    </div>`;
+  document.getElementById('stats').innerHTML =
+    cell((shortModel(d.baseline_model)||"baseline")+" · baseline", fmt(d.baseline_pass_at_1), "pass@1 · "+clears(d.baseline_pass_at_1)) +
+    cell((shortModel(d.cologic_model)||"cologic")+" · cologic", fmt(d.cologic_pass_at_1), "pass@1 · "+clears(d.cologic_pass_at_1),
+      {border:GREEN, lab:DEEP, num:GREEN, sub:DEEP}) +
+    cell("improvement", (d.uplift>=0?"+":"")+upRel.toFixed(1)+"%",
+      (d.uplift>=0?"+":"")+(d.uplift*100).toFixed(1)+" pts · "+lifted+"/"+d.per_task.length+" tasks lifted",
+      {bg:"#06210c", border:"#06210c", lab:"#8fcf98", num:"#7BE05A", sub:"#8fcf98"});
+}
+
+function renderBars(d){
+  const tasks=d.per_task, n=d.n_per_task||5;
+  const P={x:50,y:24,w:690,h:236}, baseY=P.y+P.h;
+  const yP=v=>baseY - v*P.h;
+  let s="";
+  [0,.25,.5,.75,1].forEach(v=>{ const y=yP(v);
+    s+=`<line x1="50" y1="${y.toFixed(1)}" x2="740" y2="${y.toFixed(1)}" stroke="#EDE8DA"/>`;
+    s+=`<text x="40" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="11" fill="${MUT}">${v.toFixed(2)}</text>`;
+  });
+  const gate=d.gate ?? 0.60, gy=yP(gate);
+  s+=`<line x1="50" y1="${gy.toFixed(1)}" x2="740" y2="${gy.toFixed(1)}" stroke="${GATE}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
+  s+=`<text x="740" y="${(gy-6).toFixed(1)}" text-anchor="end" font-size="10.5" fill="${GATE}" font-weight="600">deployment gate · ${gate.toFixed(2)}</text>`;
+  const gw=P.w/tasks.length, bw=26;
+  tasks.forEach((t,i)=>{
+    const cx=P.x+i*gw+gw/2, x1=cx-bw-3, x2=cx+3, cc=x2+bw/2;
+    const bar=(x,v,fill,ink)=>{
+      s+=`<rect x="${x.toFixed(1)}" y="${yP(v).toFixed(1)}" width="${bw}" height="${Math.max(0,baseY-yP(v)).toFixed(1)}" rx="1.5" fill="${fill}"/>`;
+      s+=`<text x="${(x+bw/2).toFixed(1)}" y="${(yP(v)-7).toFixed(1)}" text-anchor="middle" font-size="10" fill="${ink}" font-weight="600">${v.toFixed(2)}</text>`;
+    };
+    bar(x1,t.baseline,BASE,BASEINK); bar(x2,t.cologic,GREEN,DEEP);
+    const se=Math.sqrt(Math.max(0,t.cologic*(1-t.cologic)/n));
+    if(se>0.001){ const top=yP(Math.min(1,t.cologic+se)), bot=yP(Math.max(0,t.cologic-se));
+      s+=`<line x1="${cc.toFixed(1)}" y1="${top.toFixed(1)}" x2="${cc.toFixed(1)}" y2="${bot.toFixed(1)}" stroke="#8a8073"/>`;
+      s+=`<line x1="${(cc-4).toFixed(1)}" y1="${top.toFixed(1)}" x2="${(cc+4).toFixed(1)}" y2="${top.toFixed(1)}" stroke="#8a8073"/>`;
+      s+=`<line x1="${(cc-4).toFixed(1)}" y1="${bot.toFixed(1)}" x2="${(cc+4).toFixed(1)}" y2="${bot.toFixed(1)}" stroke="#8a8073"/>`;
+    }
+    s+=`<text x="${cx.toFixed(1)}" y="288" text-anchor="middle" font-size="11" fill="#57534E">${t.short}</text>`;
+    s+=`<text x="${cx.toFixed(1)}" y="303" text-anchor="middle" font-size="9.5" fill="${MUT}">${t.bp} → ${t.cp}</text>`;
+  });
+  s+=`<line x1="50" y1="${baseY}" x2="740" y2="${baseY}" stroke="${BASE}" stroke-width="1.2"/>`;
+  document.getElementById('bars').innerHTML=s;
+  const lifted=tasks.filter(t=>t.cologic>t.baseline).map(t=>t.short);
+  document.getElementById('fig1tail').textContent = lifted.length
+    ? "Cologic scores higher than baseline on "+lifted.join(", ")+"; the others are unchanged."
+    : "No per-task change over baseline in this run.";
+}
+
+function renderTable(d){
+  document.getElementById('rows').innerHTML = d.per_task.map(t=>{
+    const dlt=t.cologic-t.baseline, c=dlt>0?"#2f9e44":(dlt<0?"#b91c1c":"#A8A29E");
+    return `<div style="display:flex;align-items:center;padding:10px 18px;border-bottom:1px solid #EDE8DA" class="mono">
+      <span style="flex:1;font-size:12.5px;color:#1C1917">${t.id}</span>
+      <span style="width:110px;text-align:right;font-size:12.5px;color:#78716C">${fmt(t.baseline)} (${t.bp})</span>
+      <span style="width:110px;text-align:right;font-size:12.5px;color:#1C1917;font-weight:600">${fmt(t.cologic)} (${t.cp})</span>
+      <span style="width:74px;text-align:right;font-size:12.5px;font-weight:700;color:${c}">${(dlt>0?"+":"")+dlt.toFixed(2)}</span>
+    </div>`;
+  }).join("");
+  const dlt=d.uplift, c=dlt>0?"#2f9e44":(dlt<0?"#b91c1c":"#A8A29E");
+  document.getElementById('totals').innerHTML =
+    `<span style="flex:1;font-size:13px;font-weight:700">pass@1</span>
+     <span style="width:110px;text-align:right;font-size:13px;font-weight:700;color:#78716C">${d.baseline_pass_at_1.toFixed(3)}</span>
+     <span style="width:110px;text-align:right;font-size:13px;font-weight:700;color:${GREEN}">${d.cologic_pass_at_1.toFixed(3)}</span>
+     <span style="width:74px;text-align:right;font-size:13px;font-weight:700;color:${c}">${(dlt>0?"+":"")+dlt.toFixed(3)}</span>`;
+}
+
+function renderStatus(d){
+  const el=document.getElementById('status');
+  if(d.source==="snapshot"){
+    el.innerHTML=`<span style="background:#FEF3C7;color:#92400E;padding:3px 9px;border-radius:5px">snapshot data — not from an eval run</span>`;
+  } else {
+    el.innerHTML=`<span style="background:#ECFDF5;color:#065F46;padding:3px 9px;border-radius:5px">eval run · ${d.source}</span>`;
+  }
+}
+
+function renderFooter(d){
+  document.getElementById('footer').textContent =
+    `ho-bench · ${d.per_task.length} tasks · ${d.n_per_task} samples/task · reward = compile ∧ testbench-pass · `+
+    `baseline=${d.baseline_model||"?"} · cologic=${d.cologic_model||d.model||"?"} · sampled via HUD gateway, graded with Verilator`;
+}
+
+fetch('./data.json',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+  document.getElementById('legBase').textContent=shortModel(d.baseline_model)||"baseline";
+  document.getElementById('legCol').textContent=shortModel(d.cologic_model)||"cologic";
+  document.getElementById('thBase').textContent=shortModel(d.baseline_model)||"baseline";
+  document.getElementById('thCol').textContent=shortModel(d.cologic_model)||"cologic";
+  renderStatus(d); renderStats(d); renderBars(d); renderTable(d); renderFooter(d);
+}).catch(e=>{
+  document.getElementById('status').innerHTML=
+    `<span style="background:#FEE2E2;color:#991B1B;padding:3px 9px;border-radius:5px">failed to load data.json — ${e}</span>`;
+});
+</script>
+</body>
+</html>

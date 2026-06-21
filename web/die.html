@@ -29,6 +29,7 @@
       <div class="mono" style="font-size:15px;color:#eafbe4;font-weight:600">Cologic · die view</div>
       <div class="mono" style="font-size:11px;color:#647A5E;letter-spacing:.04em">streaming multiprocessor · SM90 (Hopper-class) · structural diagram</div>
     </div>
+    <a href="./benchmark.html" class="mono" style="text-decoration:none;font-size:12px;color:#5BC24A;border:1px solid rgba(91,194,74,.4);border-radius:6px;padding:7px 13px;margin-right:8px">benchmark</a>
     <a href="./index.html" class="mono" style="text-decoration:none;font-size:12px;color:#5BC24A;border:1px solid rgba(91,194,74,.4);border-radius:6px;padding:7px 13px">← foundry</a>
   </div>
 
@@ -55,7 +56,7 @@
     <div id="texs" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-top:6px"></div>
   </div>
 
-  <div class="mono" style="font-size:10.5px;color:#4a5a44;line-height:1.6;margin-top:14px">structure after NVIDIA Hopper SM90 · GPU cores in <span style="color:#7BE05A">green</span>, tensor/special compute in <span style="color:#e08ac0">maroon</span>, scheduling in <span style="color:#e6c84a">orange</span>, memory in <span style="color:#6fb6d8">blue/teal</span> · this is how Cologic will render a real netlist, structure over texture</div>
+  <div class="mono" style="font-size:10.5px;color:#4a5a44;line-height:1.6;margin-top:14px">structure after NVIDIA Hopper SM90 · GPU cores in <span style="color:#7BE05A">green</span>, tensor/special compute in <span style="color:#e08ac0">maroon</span>, scheduling in <span style="color:#e6c84a">orange</span>, memory in <span style="color:#6fb6d8">blue/teal</span>.</div>
 </div>
 
 <script>
@@ -65,8 +66,8 @@ const INFO={
   WARP:["Warp Scheduler","Issues one 32-thread warp per clock to this quadrant’s execution units. Hides memory latency by switching warps every cycle.","#e6c84a"],
   DISP:["Dispatch Unit","Routes the issued warp’s instruction to the correct execution pipe (INT, FP, tensor, LD/ST).","#e6c84a"],
   REG:["Register File","16,384 × 32-bit registers per quadrant — operand storage for every in-flight thread. The widest, fastest memory on the SM.","#6fb6d8"],
-  CORES:["CUDA Cores","The compute grid: INT32, FP32 and FP64 lanes. One MAC per core per clock — this is where Cologic’s systolic array maps.","#7BE05A"],
-  TENSOR:["Tensor Core (4th gen)","Operates on whole matrix tiles per instruction (HMMA: D = A·B + C). The unit Cologic targets for tensor-matmul kernels.","#e08ac0"],
+  CORES:["CUDA Cores","The compute grid: INT32, FP32 and FP64 lanes. One MAC per core per clock.","#7BE05A"],
+  TENSOR:["Tensor Core (4th gen)","Operates on whole matrix tiles per instruction (HMMA: D = A·B + C).","#e08ac0"],
   LDST:["Load / Store Unit","Moves operands between the register file and L1/shared memory — one address per thread per clock.","#7BE05A"],
   SFU:["Special Function Unit","Transcendentals (sin, rsqrt, exp) and interpolation at reduced throughput.","#e08ac0"],
   TMA:["Tensor Memory Accelerator","Asynchronously bulk-copies large tiles between global and shared memory, freeing threads from address math.","#7BE05A"],
