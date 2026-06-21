@@ -175,3 +175,73 @@ TRAIN_OPT_TASKS: list[Task] = [t for t in OPT_TASKS if not t.held_out]
 HELDOUT_OPT_TASKS: list[Task] = [t for t in OPT_TASKS if t.held_out]
 BY_ID = {t.task_id: t for t in OPT_TASKS}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SERIOUS BENCHMARK — real external RTL, answer NOT supplied by us.
+#
+# Everything above is small, combinational, and (importantly) hand-written here,
+# so its optimization ceiling is bounded by what we already know to write. That
+# cannot demonstrate the project's core claim: that the loop exceeds the bare LLM.
+#
+# `tpu_matmul` instead points the optimizer at the REAL `tt_um_tpu` — a 2x2 signed
+# systolic matrix-multiply accelerator from the open-source repo `YashKarthik/tpu`
+# (a verified gradient; provenance in data/verified_gradients.jsonl). We did not
+# author it. Its baseline spells out EIGHT signed 8x8 multipliers
+#   c00=a0*b0+a1*b2  c01=a0*b1+a1*b3  c10=a2*b0+a3*b2  c11=a2*b1+a3*b3
+# yet only ONE byte (output_sel of c00..c11) is observable per cycle — a genuine
+# unshared datapath with large, synth-surviving headroom whose optimal sharing is
+# a real engineering problem, not one we encode here.
+#
+# This is a CLOCKED task, so it grades through the equivalence-testbench-template
+# path (candidate vs. reference co-simulated under the same stimulus) rather than
+# the auto-generated combinational testbench. We reuse the real candidate-vs-ref
+# testbench already written for the verified-gradient correctness task.
+#
+# Note the role swap vs. the v1 correctness task `vg_tpu_repeated_matmul2x2`: there
+# the model GENERATES `tt_um_tpu` from a spec and the RTL is the oracle; here the
+# RTL is the BASELINE TO BEAT and the only reward is "equivalent to it AND smaller"
+# (cologic.grader). We deliberately ship NO reference-optimal rewrite — the tooling
+# decides what counts, so the benchmark can measure optimizations we don't know.
+# ─────────────────────────────────────────────────────────────────────────────
+from cologic.tasks import TPU_REPEATED_MATMUL_REF, TPU_REPEATED_MATMUL_TB  # noqa: E402
+
+TPU_MATMUL_BASELINE = TPU_REPEATED_MATMUL_REF
+
+# Subtly broken "optimization": C11 reads b2 instead of b3 in its second product.
+# Equivalent on most stimuli; wrong only when output_sel==3 (C11) and b2 != b3.
+# Used ONLY to prove the equivalence gate catches a bad rewrite — never as a target.
+TPU_MATMUL_BROKEN = TPU_REPEATED_MATMUL_REF.replace(
+    "wire signed [15:0] c11 = a2 * b1 + a3 * b3;",
+    "wire signed [15:0] c11 = a2 * b1 + a3 * b2;",
+)
+
+tpu_matmul = Task(
+    task_id="opt_tpu_matmul2x2",
+    top_module="tt_um_tpu",
+    spec="Optimize this 2x2 signed matrix-multiply accelerator for gate count while "
+         "preserving its exact cycle-accurate I/O behaviour (it loads matrices A and B "
+         "and outputs a selected element of A*B).",
+    interface=[
+        Port("ui_in", "input", 8),
+        Port("uo_out", "output", 8),
+        Port("uio_in", "input", 8),
+        Port("uio_out", "output", 8),
+        Port("uio_oe", "output", 8),
+        Port("ena", "input", 1),
+        Port("clk", "input", 1),
+        Port("rst_n", "input", 1),
+    ],
+    reference_rtl=TPU_MATMUL_BASELINE,
+    n_vectors=64,  # 8 output comparisons per scenario -> dense clocked equivalence check
+    seed=6,
+    clocked=True,
+    testbench_template=TPU_REPEATED_MATMUL_TB,
+    allow_extra_modules=True,  # an optimized rewrite may factor out submodules
+    tags=["clocked", "arith", "tpu", "systolic-array", "headroom:resource-share", "serious"],
+)
+
+# Clocked optimization tasks grade through a testbench template, so they are kept
+# OUT of OPT_TASKS (which feeds the combinational upload/manifest flow). The
+# measurement harness consumes this list directly.
+CLOCKED_OPT_TASKS: list[Task] = [tpu_matmul]
+
