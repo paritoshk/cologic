@@ -175,6 +175,12 @@ uv run pytest -q
 uv pip install -e ".[train]"
 ```
 
+For a quick local proof that the converted TPU gradients give dense,
+Verilator-grounded rewards:
+
+```bash
+uv run python scripts/demo_verified_tasks.py
+```
 ## Decision records
 
 ### ADR-001: consolidate the backend into `cologic/`
