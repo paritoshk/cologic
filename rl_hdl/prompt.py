@@ -16,6 +16,9 @@ SYSTEM = (
 
 
 def build_user_prompt(task: Task) -> str:
+    # Ingested benchmark prompts already state the module name + interface.
+    if task.prompt_is_complete:
+        return task.spec
     return (
         f"{task.spec}\n\n"
         f"Write a Verilog module named `{task.top_module}` with exactly this interface:\n\n"

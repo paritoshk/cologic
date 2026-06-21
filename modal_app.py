@@ -100,9 +100,15 @@ def main(
     from collections import Counter
 
     from rl_hdl.eval import aggregate
-    from rl_hdl.tasks import HELDOUT_TASKS, TRAIN_TASKS
 
-    tasks = {"heldout": HELDOUT_TASKS, "train": TRAIN_TASKS}[split]
+    if split == "verilogeval":
+        from rl_hdl.datasets.verilogeval import load as load_verilogeval
+
+        tasks = load_verilogeval()
+    else:
+        from rl_hdl.tasks import HELDOUT_TASKS, TRAIN_TASKS
+
+        tasks = {"heldout": HELDOUT_TASKS, "train": TRAIN_TASKS}[split]
 
     if selftest:
         # Feed each task its own golden reference: a green end-to-end check of the

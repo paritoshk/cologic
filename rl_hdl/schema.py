@@ -55,6 +55,9 @@ class Task:
     # Per-task generation budget (overrides the global default); larger designs
     # need more room. None -> fall back to the global RLHDL_MAX_TOKENS / default.
     max_tokens: int | None = None
+    # When the spec already contains the full prompt + interface (e.g. ingested
+    # benchmark problems), use it verbatim instead of appending our interface block.
+    prompt_is_complete: bool = False
 
     @property
     def inputs(self) -> list[Port]:

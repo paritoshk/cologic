@@ -7,6 +7,7 @@ import shutil
 import pytest
 
 from rl_hdl import grade
+from rl_hdl.schema import Port, Task
 from rl_hdl.tasks import BY_ID, SEED_TASKS
 from rl_hdl.verifier import COMPILE_ERROR_REWARD, COMPILE_FLOOR
 
@@ -65,6 +66,20 @@ endmodule"""
     r = grade(broken, MUX)
     assert r.info["stage"] == "compile_error"
     assert r.reward == COMPILE_ERROR_REWARD
+
+
+def test_port_named_like_tb_internal_var():
+    # A DUT port named `i` must not collide with the testbench loop counter.
+    task = Task(
+        task_id="passthru_i",
+        spec="pass input i to output o",
+        top_module="passthru_i",
+        interface=[Port("i", "input", 4), Port("o", "output", 4)],
+        reference_rtl="module passthru_i(input [3:0] i, output [3:0] o); assign o = i; endmodule",
+    )
+    good = "module passthru_i(input [3:0] i, output [3:0] o); assign o = i; endmodule"
+    r = grade(good, task)
+    assert r.info["stage"] == "graded" and r.reward == pytest.approx(1.0)
 
 
 def test_no_module_scores_zero():

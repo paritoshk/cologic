@@ -14,3 +14,8 @@ rlhdl_*/
 baseline.json
 records.jsonl
 *.jsonl
+
+# vendored datasets (raw clone)
+data/
+*_selftest.json
+ve_*.json
