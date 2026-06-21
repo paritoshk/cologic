@@ -44,3 +44,7 @@ baseline.json
 
 # agent skills (installed per-machine via `npx skills add`)
 .agents/
+.claude/skills/
+.windsurf/
+skills/
+skills-lock.json
