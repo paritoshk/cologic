@@ -18,16 +18,17 @@ from eval_protocol.models import EvaluateResult, EvaluationRow, MetricResult
 from eval_protocol.pytest.default_single_turn_rollout_process import SingleTurnRolloutProcessor
 from eval_protocol.pytest.evaluation_test import evaluation_test
 
-from cologic.designs import BY_ID
+from cologic.designs import BY_ID, CLOCKED_OPT_TASKS
 from cologic.grader import grade
 
 DATASET = Path(__file__).with_name("dataset.jsonl")
 DEFAULT_ROLLOUT_MODEL = os.environ.get(
     "COLOGIC_RFT_ROLLOUT_MODEL",
-    "accounts/fireworks/models/gemma-4-26b-a4b-it",
+    "accounts/fireworks/models/kimi-k2p7-code",
 )
 MAX_DATASET_ROWS = int(os.environ.get("COLOGIC_RFT_MAX_DATASET_ROWS", "0")) or None
 MAX_OUTPUT_TOKENS = int(os.environ.get("COLOGIC_RFT_MAX_OUTPUT_TOKENS", "2048"))
+TASKS_BY_ID = {**BY_ID, **{task.task_id: task for task in CLOCKED_OPT_TASKS}}
 
 
 def _task_id(row: EvaluationRow) -> str | None:
@@ -79,7 +80,7 @@ def _result_reason(task_id: str, reward: float, info: dict) -> str:
 )
 def test_cologic_optimize_reward(row: EvaluationRow) -> EvaluationRow:
     task_id = _task_id(row)
-    if not task_id or task_id not in BY_ID:
+    if not task_id or task_id not in TASKS_BY_ID:
         row.evaluation_result = EvaluateResult(
             score=0.0,
             reason=f"Unknown optimization task_id in dataset metadata: {task_id!r}",
@@ -96,7 +97,7 @@ def test_cologic_optimize_reward(row: EvaluationRow) -> EvaluationRow:
         )
         return row
 
-    result = grade(completion, BY_ID[task_id])
+    result = grade(completion, TASKS_BY_ID[task_id])
     info = dict(result.info)
     equivalent = bool(info.get("equivalent"))
     improvement = info.get("area_improvement")

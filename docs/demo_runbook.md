@@ -1,7 +1,7 @@
 # Demo Runbook
 
 Use this path for the hackathon demo. It shows the system working without
-claiming the first tiny RFT run improved model quality.
+overclaiming the first tiny generation-RFT run.
 
 ## Positioning
 
@@ -16,6 +16,8 @@ What is demo-ready:
 - Yosys PPA reward for equivalent-but-smaller RTL optimization.
 - Modal parallel grading.
 - Fireworks inference, RFT job completion, and deployed RFT model endpoint.
+- Fireworks optimize-RFT weight-update canary: reward-valid RTL sampling improved
+  after training, though area optimization is not solved yet.
 - Verified TPU/NPU task split with golden selftest.
 - Single-design flywheel that rides a design's gate count down until plateau.
 - Real externally-authored TPU matmul RTL where the loop beats a zero-shot sample.
@@ -24,6 +26,8 @@ Do not claim:
 
 - The first tiny RFT policy is better than its base model. It is deployed and
   callable, but its heldout score is poor.
+- The optimize-RFT canary learned smaller circuits. It improved equivalence /
+  validity under the reward, but did not yet improve Yosys cell count.
 
 ## Preflight
 
@@ -164,6 +168,52 @@ ok: true
 model: accounts/sorenmadsen/deployments/cologic-qwen3-rft
 ```
 
+### 7. RFT Weight-Update Canary
+
+Training job:
+
+```sh
+modal run scripts/modal_fireworks_rft.py::status \
+  --job-id p08xoviq \
+  --account sorenmadsen
+```
+
+What to point at:
+
+- This is the clean "weights updated from reward" proof.
+- Base model: `accounts/fireworks/models/qwen3-0p6b`.
+- Output model: `accounts/sorenmadsen/models/cologic-qwen3-0p6b-opt-rft-0621a`.
+- The reward is still the same Verilator/Yosys optimize evaluator.
+- The learned shift is validity/equivalence, not smaller area yet.
+
+Recent training-curve result:
+
+```text
+epoch 0: average score 0.0281, equivalent  3/64
+epoch 1: average score 0.1180, equivalent 12/64
+```
+
+Deployment A/B:
+
+```sh
+modal run modal_app.py::harness_run --design mux4 \
+  --model accounts/sorenmadsen/deployments/cologic-qwen3-0p6b-base \
+  --n 16 --temperature 0.8 --repair 0
+
+modal run modal_app.py::harness_run --design mux4 \
+  --model accounts/sorenmadsen/deployments/cologic-qwen3-opt-rft \
+  --n 16 --temperature 0.8 --repair 0
+```
+
+Recent result:
+
+```text
+base Qwen3-0.6B: 2/17 equivalent, no area win
+opt RFT model:   7/17 equivalent, no area win
+```
+
+Recorded artifact: [data/rft_weight_update_canary.json](../data/rft_weight_update_canary.json)
+
 ## Backup Lines
 
 If the live internet path stalls:
@@ -175,8 +225,8 @@ If the live internet path stalls:
 
 ## Honest Status Of RFT
 
-The first RFT job was intentionally tiny. It completed and deployed, but the
-heldout eval currently shows:
+The first generation-RFT job was intentionally tiny. It completed and deployed,
+but the heldout eval currently shows:
 
 ```text
 pass@1 0.000   mean 0.061
@@ -184,5 +234,6 @@ pass@1 0.000   mean 0.061
 
 Frame it as:
 
-> The training/deployment plumbing works end to end. The next iteration is data
-> quality and model selection, not reward trust.
+> The generation-RFT deployment plumbing works end to end, and the newer
+> optimize-RFT canary proves reward-driven weight updates. The next iteration is
+> moving from validity/equivalence gains to consistent area gains.

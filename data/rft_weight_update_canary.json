@@ -1,0 +1,128 @@
+{
+  "created_at": "2026-06-21T11:35:00-07:00",
+  "objective": "optimize",
+  "verdict": "verified_weight_update_but_not_yet_area_optimization",
+  "summary": {
+    "claim": "Fireworks RFT updated Qwen3-0.6B weights against the rl-hdl Yosys/Verilator reward and improved reward-valid RTL sampling.",
+    "caveat": "The improvement is mostly equivalence/validity. The model did not yet learn smaller circuits under greedy or sampled deployment checks."
+  },
+  "training_job": {
+    "job_id": "p08xoviq",
+    "name": "accounts/sorenmadsen/reinforcementFineTuningJobs/p08xoviq",
+    "state": "JOB_STATE_COMPLETED",
+    "base_model": "accounts/fireworks/models/qwen3-0p6b",
+    "output_model": "accounts/sorenmadsen/models/cologic-qwen3-0p6b-opt-rft-0621a",
+    "dashboard": "https://app.fireworks.ai/dashboard/fine-tuning/reinforcement/p08xoviq",
+    "dataset": "accounts/sorenmadsen/datasets/test-cologic-opt-reward-test-cologic-opt-dataset-20260621110435",
+    "evaluator": "accounts/sorenmadsen/evaluators/test-cologic-opt-reward-test-cologic-optimize-reward",
+    "train_task_ids": [
+      "opt_mul8",
+      "opt_mux4",
+      "opt_popcount8",
+      "opt_share_mul"
+    ],
+    "command": "modal run scripts/modal_fireworks_rft.py::launch --force --objective optimize --split opt-train --base-model accounts/fireworks/models/qwen3-0p6b --account sorenmadsen --output-model cologic-qwen3-0p6b-opt-rft-0621a --epochs 2 --learning-rate 0.00001 --lora-rank 16 --batch-size-samples 2 --chunk-size 8 --max-output-tokens 2048 --temperature 0.8 --response-candidates-count 16 --max-concurrent-rollouts 4 --max-concurrent-evaluations 4",
+    "reward_curves": {
+      "epoch_0": {
+        "average_score": 0.028125,
+        "equivalent_rate": 0.046875,
+        "equivalent_count": 3,
+        "total_count": 64,
+        "area_improvement_average": 0.0
+      },
+      "epoch_1": {
+        "average_score": 0.11796875,
+        "equivalent_rate": 0.1875,
+        "equivalent_count": 12,
+        "total_count": 64,
+        "area_improvement_average": 0.0
+      }
+    }
+  },
+  "deployments": {
+    "base": {
+      "name": "accounts/sorenmadsen/deployments/cologic-qwen3-0p6b-base",
+      "base_model": "accounts/fireworks/models/qwen3-0p6b",
+      "min_replica_count": 0,
+      "max_replica_count": 1,
+      "state": "READY"
+    },
+    "rft": {
+      "name": "accounts/sorenmadsen/deployments/cologic-qwen3-opt-rft",
+      "base_model": "accounts/sorenmadsen/models/cologic-qwen3-0p6b-opt-rft-0621a",
+      "min_replica_count": 0,
+      "max_replica_count": 1,
+      "state": "READY"
+    }
+  },
+  "deployment_checks": [
+    {
+      "task_id": "opt_mul8",
+      "split": "train",
+      "command_base": "modal run modal_app.py::harness_run --design mul8 --model accounts/sorenmadsen/deployments/cologic-qwen3-0p6b-base --n 16 --temperature 0.8 --repair 0",
+      "command_rft": "modal run modal_app.py::harness_run --design mul8 --model accounts/sorenmadsen/deployments/cologic-qwen3-opt-rft --n 16 --temperature 0.8 --repair 0",
+      "base": {
+        "n_equivalent": 9,
+        "pool_size": 17,
+        "best_reward": 0.5164,
+        "best_area_improvement": 0.032787,
+        "improved": true
+      },
+      "rft": {
+        "n_equivalent": 12,
+        "pool_size": 17,
+        "best_reward": 0.5,
+        "best_area_improvement": 0.0,
+        "improved": false
+      }
+    },
+    {
+      "task_id": "opt_mux4",
+      "split": "train",
+      "command_base": "modal run modal_app.py::harness_run --design mux4 --model accounts/sorenmadsen/deployments/cologic-qwen3-0p6b-base --n 16 --temperature 0.8 --repair 0",
+      "command_rft": "modal run modal_app.py::harness_run --design mux4 --model accounts/sorenmadsen/deployments/cologic-qwen3-opt-rft --n 16 --temperature 0.8 --repair 0",
+      "base": {
+        "n_equivalent": 2,
+        "pool_size": 17,
+        "best_reward": 0.5,
+        "best_area_improvement": 0.0,
+        "improved": false
+      },
+      "rft": {
+        "n_equivalent": 7,
+        "pool_size": 17,
+        "best_reward": 0.5,
+        "best_area_improvement": 0.0,
+        "improved": false
+      }
+    },
+    {
+      "task_id": "opt_share_add",
+      "split": "heldout",
+      "command_base": "modal run modal_app.py::harness_run --design share_add --model accounts/sorenmadsen/deployments/cologic-qwen3-0p6b-base --n 16 --temperature 0.8 --repair 0",
+      "command_rft": "modal run modal_app.py::harness_run --design share_add --model accounts/sorenmadsen/deployments/cologic-qwen3-opt-rft --n 16 --temperature 0.8 --repair 0",
+      "base": {
+        "n_equivalent": 12,
+        "pool_size": 17,
+        "best_reward": 0.5,
+        "best_area_improvement": 0.0,
+        "improved": false
+      },
+      "rft": {
+        "n_equivalent": 13,
+        "pool_size": 17,
+        "best_reward": 0.5,
+        "best_area_improvement": 0.0,
+        "improved": false
+      }
+    }
+  ],
+  "aborted_jobs": [
+    {
+      "job_id": "waw8ouos",
+      "base_model": "accounts/fireworks/models/kimi-k2p7-code",
+      "output_model": "accounts/sorenmadsen/models/cologic-kimi-opt-plus-tpu-rft-0621d",
+      "reason": "cancelled at 25 percent while spending time in large-model setup; Qwen canary was prioritized as the lower-cost weight-update proof"
+    }
+  ]
+}

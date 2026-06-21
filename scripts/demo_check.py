@@ -82,6 +82,34 @@ def _check_deployed_rft_eval() -> bool:
     return True
 
 
+def _check_rft_weight_update_canary() -> bool:
+    try:
+        data = _load_json("data/rft_weight_update_canary.json")
+    except Exception as exc:  # noqa: BLE001
+        _warn("RFT weight-update canary", f"no recorded canary yet: {exc}")
+        return True
+    job = data.get("training_job") or {}
+    curves = job.get("reward_curves") or {}
+    epoch_0 = curves.get("epoch_0") or {}
+    epoch_1 = curves.get("epoch_1") or {}
+    score_0 = float(epoch_0.get("average_score", -1.0))
+    score_1 = float(epoch_1.get("average_score", -1.0))
+    equiv_0 = int(epoch_0.get("equivalent_count", -1))
+    equiv_1 = int(epoch_1.get("equivalent_count", -1))
+    total = int(epoch_1.get("total_count", 0))
+    if data.get("verdict") and score_1 > score_0 and equiv_1 > equiv_0:
+        _ok(
+            "RFT weight-update canary",
+            f"score {score_0:.4f}->{score_1:.4f}, equivalent {equiv_0}/{total}->{equiv_1}/{total}",
+        )
+    else:
+        _warn(
+            "RFT weight-update canary",
+            f"no clear recorded gain: score {score_0:.4f}->{score_1:.4f}, equivalent {equiv_0}->{equiv_1}",
+        )
+    return True
+
+
 def _check_tpu_optimization_artifact() -> bool:
     paths = [
         ROOT / "docs/tpu_matmul_optimization/README.md",
@@ -126,12 +154,13 @@ def main() -> int:
         _check_pass_at_1("data/fireworks_inference_kimi_heldout.json", "Fireworks Kimi heldout eval", 1.0),
         _check_rft_summary(),
         _check_deployed_rft_eval(),
+        _check_rft_weight_update_canary(),
         _check_tpu_optimization_artifact(),
         _check_offline_flywheel(),
     ]
     print("\nDemo framing:")
     print("- Lead with verifiable rewards: Verilator/Yosys, no LLM judge.")
-    print("- Show RFT as completed and deployed, not as a quality win yet.")
+    print("- Show optimize-RFT as a weight-update canary, not as solved area optimization.")
     print("- Use docs/demo_runbook.md for the exact live command sequence.")
     return 0 if all(checks) else 1
 

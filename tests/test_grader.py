@@ -128,14 +128,15 @@ def test_liberty_path_resolves_only_existing_files(tmp_path, monkeypatch):
 
 
 def test_area_um2_keys_are_present_and_none_without_liberty(monkeypatch):
-    """The *_um2 info keys are part of the stable contract and stay None (reward
-    untouched) when no liberty library is configured."""
+    """The *_um2 info keys are part of the stable contract and stay None when no
+    liberty library is configured. The reward remains the normal cell-count
+    reward; it is not affected by the absent real-area observation."""
     monkeypatch.delenv("RLHDL_LIBERTY", raising=False)
     r = grade(MUL8_GOOD, mul8)
     assert r.info["equivalent"] is True
     for key in ("ref_area_um2", "cand_area_um2", "area_um2_improvement"):
         assert key in r.info and r.info[key] is None
-    assert r.reward >= EQUIV_BASE  # real-area observation never lowers the reward
+    assert r.reward >= EQUIV_FLOOR
 
 
 @pytest.mark.skipif(

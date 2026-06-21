@@ -16,12 +16,12 @@ import modal
 app = modal.App("rl-hdl-fireworks-rft")
 
 METHOD_ALIASES = {
-    "grpo": "GRPO",
-    "dapo": "DAPO",
-    "dpo": "DPO",
-    "orpo": "ORPO",
-    "gspo-token": "GSPO_TOKEN",
-    "gspo_token": "GSPO_TOKEN",
+    "grpo": "grpo",
+    "dapo": "dapo",
+    "dpo": "dpo",
+    "orpo": "orpo",
+    "gspo-token": "gspo-token",
+    "gspo_token": "gspo-token",
 }
 
 launcher_image = (
@@ -139,6 +139,7 @@ def launch_remote(
     chunk_size: int,
     max_output_tokens: int,
     temperature: float,
+    response_candidates_count: int,
     max_concurrent_rollouts: int,
     max_concurrent_evaluations: int,
     method: str,
@@ -186,6 +187,8 @@ def launch_remote(
         str(max_output_tokens),
         "--temperature",
         str(temperature),
+        "--inference-parameters-response-candidates-count",
+        str(response_candidates_count),
         "--max-concurrent-rollouts",
         str(max_concurrent_rollouts),
         "--max-concurrent-evaluations",
@@ -193,7 +196,11 @@ def launch_remote(
     ]
     if method:
         method = METHOD_ALIASES.get(method.lower(), method)
-        cmd.extend(["--method", method])
+        raise ValueError(
+            "eval-protocol 0.3.31 advertises --method/--loss-config-method, "
+            f"but rejects method literal {method!r} at parse time. Omit --method "
+            "until the upstream CLI parser is fixed."
+        )
     if force:
         cmd.append("--force")
     if skip_validation:
@@ -299,6 +306,7 @@ def launch(
     chunk_size: int = 10,
     max_output_tokens: int = 2048,
     temperature: float = 0.7,
+    response_candidates_count: int = 8,
     max_concurrent_rollouts: int = 4,
     max_concurrent_evaluations: int = 4,
     method: str = "",
@@ -328,6 +336,7 @@ def launch(
         chunk_size=chunk_size,
         max_output_tokens=max_output_tokens,
         temperature=temperature,
+        response_candidates_count=response_candidates_count,
         max_concurrent_rollouts=max_concurrent_rollouts,
         max_concurrent_evaluations=max_concurrent_evaluations,
         method=method,

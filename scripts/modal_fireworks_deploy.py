@@ -360,7 +360,14 @@ def probe_remote(target: str, account: str, wait_seconds: int, poll_seconds: int
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             attempts.append(error)
-            retryable = "503" in error or "scal" in error.lower() or "temporarily" in error.lower()
+            lower_error = error.lower()
+            retryable = (
+                "503" in error
+                or "scal" in lower_error
+                or "temporarily" in lower_error
+                or "not found" in lower_error
+                or "not deployed" in lower_error
+            )
             if not retryable or time.time() >= deadline:
                 return {
                     "target": target,

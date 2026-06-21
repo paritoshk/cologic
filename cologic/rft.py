@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from cologic.designs import BY_ID as OPT_BY_ID
-from cologic.designs import OPT_TASKS
+from cologic.designs import CLOCKED_OPT_TASKS, HELDOUT_OPT_TASKS, OPT_TASKS, TRAIN_OPT_TASKS
 from cologic.prompt import build_messages, build_optimize_messages
 from cologic.schema import Task
 from cologic.tasks import BY_ID, GRADIENT_TASKS, HELDOUT_TASKS, SEED_TASKS, TRAIN_TASKS
@@ -86,12 +86,13 @@ def opt_task_to_row(task: Task, *, include_golden: bool = False) -> dict:
 
 
 def opt_rows_for_task_ids(task_ids: Iterable[str], *, include_golden: bool = False) -> list[dict]:
+    opt_by_id = {**OPT_BY_ID, **{task.task_id: task for task in CLOCKED_OPT_TASKS}}
     rows = []
     for task_id in task_ids:
         try:
-            task = OPT_BY_ID[task_id]
+            task = opt_by_id[task_id]
         except KeyError as exc:
-            known = ", ".join(sorted(OPT_BY_ID))
+            known = ", ".join(sorted(opt_by_id))
             raise KeyError(f"unknown optimization task_id {task_id!r}; known: {known}") from exc
         rows.append(opt_task_to_row(task, include_golden=include_golden))
     return rows
@@ -101,6 +102,14 @@ def opt_split_task_ids(split: str) -> list[str]:
     """Optimization task splits. `opt` = all curated optimization designs."""
     if split in ("opt", "all"):
         return [t.task_id for t in OPT_TASKS]
+    if split in ("opt-train", "train-opt"):
+        return [t.task_id for t in TRAIN_OPT_TASKS]
+    if split in ("opt-heldout", "heldout-opt"):
+        return [t.task_id for t in HELDOUT_OPT_TASKS]
+    if split in ("opt-plus-tpu", "demo"):
+        return [t.task_id for t in OPT_TASKS] + [t.task_id for t in CLOCKED_OPT_TASKS]
+    if split in ("tpu", "clocked"):
+        return [t.task_id for t in CLOCKED_OPT_TASKS]
     if split == "smoke":
         return [t.task_id for t in OPT_TASKS[: min(2, len(OPT_TASKS))]]
     raise ValueError(f"unknown optimization split {split!r}")
