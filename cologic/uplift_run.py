@@ -30,10 +30,13 @@ GATEWAY = os.environ.get("HUD_GATEWAY_URL", "https://inference.beta.hud.ai/v1")
 TASKSETS = {"hard": HARD_TASKS, "heldout": HELDOUT_TASKS}
 
 
-def make_forge(client: OpenAI, model: str, temperature: float):
+def make_forge(client: OpenAI, model: str, temperature: float, max_tokens: int = 8192):
+    # Reasoning models (e.g. gemma-4-26b-a4b-it) spend tokens in <thought> before
+    # emitting the module; too small a budget truncates them mid-thought to no_module,
+    # a *fake* failure. Give enough room to finish thinking AND write the Verilog.
     def forge(messages: list[dict]) -> str:
         r = client.chat.completions.create(
-            model=model, messages=messages, max_tokens=2048, temperature=temperature,
+            model=model, messages=messages, max_tokens=max_tokens, temperature=temperature,
         )
         return r.choices[0].message.content or ""
     return forge
@@ -47,6 +50,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="claude-haiku-4-5")
     ap.add_argument("--iters", type=int, default=4, help="max loop iterations")
+    ap.add_argument("--max-tokens", type=int, default=8192,
+                    help="completion budget; reasoning models need room to think + emit code")
     ap.add_argument("--taskset", default="hard", choices=sorted(TASKSETS),
                     help="hard = stream_arb_fifo (real headroom); heldout = saturated ho_*")
     ap.add_argument("--tasks", default="", help="comma task_ids; default = all in --taskset")
@@ -63,8 +68,8 @@ def main() -> int:
         want = set(args.tasks.split(","))
         tasks = [t for t in tasks if t.task_id in want]
 
-    greedy = make_forge(client, args.model, 0.0)
-    loopfn = make_forge(client, args.model, 0.3)
+    greedy = make_forge(client, args.model, 0.0, args.max_tokens)
+    loopfn = make_forge(client, args.model, 0.3, args.max_tokens)
 
     rows = []
     print(f"model={args.model}  tasks={len(tasks)}  loop_iters={args.iters}\n")
