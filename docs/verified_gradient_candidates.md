@@ -16,6 +16,7 @@ Local tool notes:
 - Cocotb tests were run in `/tmp/rlhdl-gradient/venv` with Python 3.12 because the default `python3` is 3.14 and forced a source build of pinned NumPy.
 - Modal run for the verified TPU proof: https://modal.com/apps/yc-hack27/main/ap-ndaw4NCj6GEWbl0jSybEfD
 - Modal run for the five-candidate Yash/tpu sweep: https://modal.com/apps/yc-hack27/main/ap-MWOFuM9e1T8JrQnCWrhNYN
+- Generated Yosys reward sweep: see `docs/yosys_verified_gradient_candidates.md` and `data/yosys_verified_gradients.jsonl`.
 
 ## Summary
 

@@ -37,6 +37,7 @@ rlhdl_*/
 baseline.json
 records.jsonl
 *.jsonl
+!fireworks_rft/dataset.jsonl
 
 # vendored datasets (raw clone)
 data/

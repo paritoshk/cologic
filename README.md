@@ -107,6 +107,36 @@ before emitting the module, which extracts to nothing and grades `0.0`
 `RLHDL_MAX_TOKENS=8192` for the worst cases. (On one deployment this lifted
 held-out pass@1 from 0.567 at 1024 to 0.933 at 4096.)
 
+## Fireworks RFT training
+
+The inference loop can improve one design within a session; Fireworks RFT is the
+weight-update path that trains the policy across sessions. The evaluator template
+in `fireworks_rft/` wraps the same reward seam in Eval Protocol:
+
+```python
+grade(completion: str, task: Task) -> GradeResult
+```
+
+Modal assembles the evaluator, copies `cologic/`, smoke-tests the reward function
+against golden RTL, then submits the Fireworks RFT job using the Modal secret
+`fireworks-api`.
+
+```bash
+# Smoke-test and show the planned Fireworks call without launching training
+modal run scripts/modal_fireworks_rft.py::launch --dry-run
+
+# Launch a Gemma RFT job that updates model weights
+modal run scripts/modal_fireworks_rft.py::launch \
+  --base-model accounts/fireworks/models/gemma-4-26b-a4b-it \
+  --account <fireworks-account> \
+  --output-model cologic-gemma-rtl-rft
+```
+
+Defaults are intentionally small (`epochs=1`, `batch-size-samples=2`,
+`max-concurrent-rollouts=4`) so the job is hackathon-pragmatic. Override
+`--base-model`, `--output-model`, `--max-rows`, and the training flags from the
+CLI when sweeping larger corpora.
+
 ## Layout
 
 ```
@@ -118,7 +148,10 @@ cologic/
   prompt.py     # Task -> chat messages for the policy model
   inference.py  # Fireworks (OpenAI-compatible) sampling
   eval.py       # pass@1 / mean-reward aggregation (grader-agnostic)
+  rft.py        # Eval Protocol JSONL rows for Fireworks RFT
 modal_app.py    # Modal image (Verilator) + parallel grader + baseline entrypoint
+fireworks_rft/   # Fireworks RFT evaluator template
+scripts/modal_fireworks_rft.py # Modal launcher for weight-update training
 agents/         # Plan/Forge/Prove self-improvement loop on cologic (see agents/README.md)
 tests/
   test_verifier.py
@@ -135,6 +168,9 @@ Requires [Verilator](https://verilator.org) on `PATH` (`brew install verilator`)
 uv venv
 uv pip install -e ".[dev]"
 uv run pytest -q
+
+# Optional training launcher deps
+uv pip install -e ".[train]"
 ```
 
 ## Decision records

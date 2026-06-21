@@ -50,11 +50,11 @@ The loop needs four things behind it; three already exist in this repo:
 3. **Planner inference (Plan)** — `messages → plan`. ⬜ optional Claude/Anthropic
    call; today defaults to a pass-through of Prove's critique. Plug a `model_fn`.
 4. **Train / weight-update** — feed `reward` back as the RLVR signal so the policy
-   actually improves across episodes (Fireworks RL fine-tune). ⬜ **the missing piece** —
-   this turn's loop optimizes *within* one task at inference time; closing the flywheel
-   ("agent updates its own weights") is the Fireworks training job.
+   actually improves across episodes (Fireworks RL fine-tune). ✅
+   `scripts/modal_fireworks_rft.py` assembles an Eval Protocol evaluator around
+   `grade()`, smoke-tests it in Modal, and launches Fireworks RFT.
 
-So the only net-new backend surface beyond what's merged is: **(a)** an optional
-Claude planner endpoint and **(b)** the Fireworks RL training/update job that
-consumes the `reward` stream. Everything else (grade, inference, parallel eval on
-Modal) is already wired.
+So the only net-new backend surface beyond what's merged is an optional Claude
+planner endpoint. The weight-update path is now wired through Fireworks RFT; the
+remaining work is to scale the task corpus and compare before/after held-out
+reward curves.
