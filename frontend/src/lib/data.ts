@@ -40,22 +40,22 @@ export const SNAPSHOT: Benchmark = {
   ],
 };
 
-// Live foundry state — the agents ("minions") walking the PE array, served from the
+// Live foundry state — the agents ("minions") editing the Verilog, served from the
 // same /state record. We only consume what the showcase renders; power/compute/clock
 // synthesis figures are intentionally ignored (gate-count + equivalence are the signal).
+// `target` carries the line/region the agent is on; the Forge maps it to a code line.
 export type Agent = { role: string; level: number; target: string; verb: string };
-export type Foundry = { epoch: number; objective: string; design: string; agents: Agent[] };
+export type Foundry = { epoch: number; goal: string; design: string; agents: Agent[] };
 
-// Bundled fallback so the section renders if the store is down (seed values mirror
-// cologic/store.py FOUNDRY_DEFAULT).
+// Bundled fallback so the section renders if the store is down.
 export const FOUNDRY_SNAPSHOT: Foundry = {
   epoch: 1284,
-  objective: "power",
-  design: "tensor-mac / systolic_8×8",
+  goal: "fewer gates",
+  design: "mux4.v",
   agents: [
-    { role: "PLAN", level: 2, target: "PE[1][3]", verb: "probing" },
-    { role: "FORGE", level: 3, target: "PE[2][2]", verb: "sampling" },
-    { role: "PROVE", level: 4, target: "PE[5][5]", verb: "sampling" },
+    { role: "PLAN", level: 2, target: "line 8", verb: "reading" },
+    { role: "FORGE", level: 3, target: "line 14", verb: "rewriting" },
+    { role: "PROVE", level: 4, target: "line 20", verb: "proving" },
   ],
 };
 
