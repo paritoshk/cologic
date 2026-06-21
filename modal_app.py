@@ -382,6 +382,37 @@ def web():
         except Exception as e:  # noqa: BLE001 — surface a remote failure as JSON, not 500
             return {"status": "error", "error": str(e)}
 
+    @api.get("/state")
+    async def state():
+        """Benchmark numbers for the site (read-only, no auth). Served from the
+        `cologic-state` Dict if seeded, else a real-eval default. Additive: does
+        not touch /optimize or /jobs."""
+        default = {
+            "source": "baseline+cologic eval",
+            "benchmark": {
+                "baseline_model": "Qwen/Qwen3-8B",
+                "cologic_model": "cologic-rtl",
+                "baseline_pass_at_1": 0.267,
+                "cologic_pass_at_1": 0.3,
+                "uplift": 0.033,
+                "gate": 0.6,
+                "n_per_task": 5,
+                "per_task": [
+                    {"id": "ho_mux2_w16", "short": "mux2_w16", "baseline": 1.0, "cologic": 1.0, "bp": "5/5", "cp": "5/5"},
+                    {"id": "ho_cmp4", "short": "cmp4", "baseline": 0.0, "cologic": 0.0, "bp": "0/5", "cp": "0/5"},
+                    {"id": "ho_popcount16", "short": "popcount16", "baseline": 0.0, "cologic": 0.0, "bp": "0/5", "cp": "0/5"},
+                    {"id": "ho_max2", "short": "max2", "baseline": 0.4, "cologic": 0.6, "bp": "2/5", "cp": "3/5"},
+                    {"id": "ho_dec2to4", "short": "dec2to4", "baseline": 0.0, "cologic": 0.0, "bp": "0/5", "cp": "0/5"},
+                    {"id": "ho_gray2bin8", "short": "gray2bin8", "baseline": 0.2, "cologic": 0.2, "bp": "1/5", "cp": "1/5"},
+                ],
+            },
+        }
+        try:
+            d = modal.Dict.from_name("cologic-state", create_if_missing=True)
+            return d.get("latest", default)
+        except Exception:  # noqa: BLE001 — never fail the read
+            return default
+
     return api
 
 
