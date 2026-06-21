@@ -23,6 +23,9 @@ grader_image = (
     .apt_install(
         "git", "make", "g++", "autoconf", "flex", "bison",
         "help2man", "libfl-dev", "ccache", "perl",
+        # Yosys for the PPA (gate-count) stage; only runs behind a passing
+        # equivalence check. Equivalence itself uses the Verilator built below.
+        "yosys",
     )
     .run_commands(
         f"git clone --depth 1 --branch {VERILATOR_TAG} "
@@ -51,6 +54,15 @@ def grade_remote(completion: str, task) -> dict:
     from rl_hdl.verifier import grade
 
     r = grade(completion, task)
+    return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
+
+
+@app.function(image=grader_image, timeout=300)
+def grade_opt_remote(candidate_rtl: str, task) -> dict:
+    """Grade one optimization candidate (gate-then-climb, incl. Yosys PPA)."""
+    from rl_hdl.grader import grade
+
+    r = grade(candidate_rtl, task)
     return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
 
 
@@ -151,6 +163,35 @@ def main(
                     "completion": txt,
                 }) + "\n")
         print(f"wrote {dump} ({len(samples)} records)")
+
+
+@app.local_entrypoint()
+def floor():
+    """§9 floor: grade the baseline + a good and a broken rewrite of mul8.
+
+    Proves the immutable grader end to end with real Yosys area numbers:
+      baseline -> equivalent, 0 area win        (it IS the reference)
+      good     -> equivalent, area win > 0       (the optimization to discover)
+      broken   -> not equivalent, no PPA credit  (gate catches the break)
+
+    Usage:  modal run modal_app.py::floor
+    """
+    from rl_hdl.designs import MUL8_BASELINE, MUL8_BROKEN, MUL8_GOOD, mul8
+
+    cands = [("baseline", MUL8_BASELINE), ("good (a*b)", MUL8_GOOD), ("broken", MUL8_BROKEN)]
+    results = list(grade_opt_remote.map([c for _, c in cands], [mul8] * len(cands)))
+
+    print(f"\nfloor design: {mul8.task_id} ({mul8.top_module})\n")
+    print(f"{'candidate':<14} {'reward':>7}  {'stage':<18} {'equiv':>5} {'ref':>5} {'cand':>5} {'win':>7}")
+    print("-" * 70)
+    for (name, _), r in zip(cands, results):
+        i = r["info"]
+        win = "" if i["area_improvement"] is None else f"{i['area_improvement'] * 100:+.1f}%"
+        ref = "" if i["ref_cells"] is None else i["ref_cells"]
+        cand = "" if i["cand_cells"] is None else i["cand_cells"]
+        print(f"{name:<14} {r['reward']:>7.3f}  {i['stage']:<18} {str(i['equivalent']):>5} "
+              f"{str(ref):>5} {str(cand):>5} {win:>7}")
+    print()
 
 
 @app.local_entrypoint()
