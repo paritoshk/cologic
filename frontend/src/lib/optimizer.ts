@@ -26,33 +26,32 @@ module mux4 (
 endmodule
 `;
 
-export type Design = {
-  id: string;
+export type HistoryStep = {
+  gen: number;
+  cells: number;
   reward: number;
   equivalent: boolean;
-  ref_cells: number;
-  cand_cells: number;
-  area_improvement: number;
+  improved: boolean;
+  area_um2?: number;
 };
-export type Generation = {
-  gen: string;
-  results?: { mean_reward?: number; designs?: Design[] };
-};
+// Real backend result (harness mode).
 export type OptResult = {
-  returncode?: number;
-  best_gen?: string;
-  best_mean_reward?: number;
-  best_rtl?: Record<string, string>;
-  generations?: Generation[];
+  task_id?: string;
+  baseline_cells?: number;
+  best_cells?: number;
+  total_improvement?: number; // gate-count reduction fraction, 0..1
+  plateaued?: boolean;
+  history?: HistoryStep[];
+  best_rtl?: string | Record<string, string>;
 };
 export type OptOutcome = {
   baselineCells: number;
   bestCells: number;
-  areaImprovement: number; // 0..1
+  areaImprovement: number; // gate-count reduction, 0..1
   equivalent: boolean;
   bestRtl: string;
   topModule: string;
-  generations: Generation[];
+  history: HistoryStep[];
 };
 
 export type Progress = (msg: string) => void;
@@ -96,8 +95,8 @@ export async function runOptimize(opts: {
   const { job_id, baseline_cells, top_module } = await sub.json();
   log(`parsing ${top_module || "design"} · baseline ${baseline_cells ?? "?"} cells`);
 
-  // poll
-  for (let i = 0; i < 90; i++) {
+  // poll (up to ~18 min; the grader can be slow under load)
+  for (let i = 0; i < 220; i++) {
     await new Promise((r) => setTimeout(r, 5000));
     if (opts.signal?.aborted) throw new Error("cancelled");
     const r = await fetch(`${OPT_BASE}/jobs/${job_id}`, {
@@ -119,21 +118,35 @@ export async function runOptimize(opts: {
   throw new Error("timed out");
 }
 
+function stripFences(s: string): string {
+  return s
+    .replace(/^```[a-zA-Z]*\n?/, "")
+    .replace(/\n?```\s*$/, "")
+    .trim();
+}
+
 function normalize(res: OptResult, baselineCells: number, topModule: string): OptOutcome {
-  const gens = res.generations || [];
-  // best design = highest reward across all generations
-  let best: Design | null = null;
-  for (const g of gens)
-    for (const d of g.results?.designs || [])
-      if (!best || d.reward > best.reward) best = d;
-  const bestRtl = res.best_rtl ? Object.values(res.best_rtl)[0] || "" : "";
+  const history = res.history || [];
+  const base = res.baseline_cells ?? baselineCells ?? 0;
+  const best = res.best_cells ?? base;
+  // equivalence: the winning (best_cells) step, else the last equivalent step
+  const win =
+    history.find((h) => h.cells === best && h.equivalent) ||
+    [...history].reverse().find((h) => h.equivalent);
+  const rawRtl =
+    typeof res.best_rtl === "string"
+      ? res.best_rtl
+      : res.best_rtl
+        ? Object.values(res.best_rtl)[0] || ""
+        : "";
   return {
-    baselineCells: best?.ref_cells ?? baselineCells ?? 0,
-    bestCells: best?.cand_cells ?? baselineCells ?? 0,
-    areaImprovement: best?.area_improvement ?? 0,
-    equivalent: best?.equivalent ?? false,
-    bestRtl,
-    topModule: topModule || (res.best_rtl ? Object.keys(res.best_rtl)[0] : "design"),
-    generations: gens,
+    baselineCells: base,
+    bestCells: best,
+    areaImprovement:
+      res.total_improvement ?? (base ? Math.max(0, (base - best) / base) : 0),
+    equivalent: win?.equivalent ?? best <= base, // backend only keeps equivalent improvements
+    bestRtl: stripFences(rawRtl),
+    topModule: topModule || "design",
+    history,
   };
 }
