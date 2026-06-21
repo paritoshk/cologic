@@ -1,7 +1,7 @@
 {
   "profile_id": "fireworks-meta",
-  "name": "Cologic meta/feedback on Fireworks (PydanticAI)",
-  "agent_impl": "pydantic-ai",
-  "model": "accounts/fireworks/models/kimi-k2p7-code",
+  "name": "Cologic meta/feedback on Fireworks (OpenHands)",
+  "agent_impl": "openhands",
+  "model": "accounts/fireworks/models/minimax-m3",
   "provider_id": "fireworks"
 }

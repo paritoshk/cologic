@@ -3,12 +3,10 @@
 Turns the loop: SIA's meta/feedback agents evolve the optimizer scaffold
 (`reference_target_agent.py`) across generations; each generation the target agent
 optimizes the designs and `evaluate.py` scores it with the IMMUTABLE grader
-(Verilator + Yosys). Single provider: meta + target both run on Fireworks
-(meta via PydanticAI), so only the `fireworks-api` secret is needed.
-
-Everything runs in one container that has the toolchain (so the agent + evaluate.py
-can grade locally) and the repo (so SIA's per-generation venv installs `cologic`
-editable).
+(deployed Verilator + Yosys verifier). The meta/feedback agent runs on Claude
+(Agent SDK), the target policy on Fireworks — so both `anthropic-api` and
+`fireworks-api` Modal secrets are needed. Verification is toolchain-free here: it
+calls the deployed `grade_opt_remote` function.
 
   modal run scripts/modal_sia_run.py::validate_entry    # cheap: no LLM calls
   modal run scripts/modal_sia_run.py::seed              # harness+verifier, no meta-agent
@@ -35,9 +33,12 @@ REPO = "/root/rl-hdl"
 # it by name. So this image is just Python deps + the repo — builds in seconds.
 sia_image = (
     modal.Image.debian_slim(python_version="3.11")
-    # `uv` so SIA builds its per-generation venv fast; sia-agent with the PydanticAI
-    # meta impl (Fireworks/OpenAI-compatible); openai (target sampling) + modal (lookup).
-    .pip_install("uv", "sia-agent[pydantic-ai]", "openai>=1.0", "modal>=0.64")
+    # The Claude Agent SDK (meta agent) drives the Node `claude` CLI under the hood.
+    .apt_install("nodejs", "npm")
+    .run_commands("npm install -g @anthropic-ai/claude-code")
+    # `uv` for SIA's per-generation venv; sia-agent[claude] = the Claude Agent SDK meta
+    # impl (the proven one — Fireworks meta loops/won't-install); openai (target) + modal.
+    .pip_install("uv", "sia-agent[claude]", "openai>=1.0", "modal>=0.64")
     # The repo: SIA's venv installs cologic editable from here, and the task dir ships.
     .add_local_dir(
         ".", REPO, copy=True,
@@ -62,10 +63,18 @@ def validate() -> dict:
     import subprocess
     from pathlib import Path
 
+    def _py(code):
+        return subprocess.run(["python", "-c", code], capture_output=True, text=True)
+
     out = {}
-    out["sia_help_rc"] = subprocess.run(["sia", "run", "--help"], capture_output=True).returncode
-    out["verilator"] = subprocess.run(["verilator", "--version"], capture_output=True, text=True).stdout.strip()[:40]
-    out["yosys"] = subprocess.run(["yosys", "--version"], capture_output=True, text=True).stdout.strip()[:40]
+    out["sia_import"] = _py("import sia.orchestrator; print('ok')").stdout.strip() or \
+        _py("import sia.orchestrator").stderr.strip()[-200:]
+    out["openhands_sdk"] = _py("import openhands.sdk; print('ok')").stdout.strip() or \
+        _py("import openhands.sdk").stderr.strip()[-200:]
+    out["sia_agent_installed"] = subprocess.run(
+        ["pip", "show", "sia-agent"], capture_output=True, text=True).stdout.split("\n")[0:2]
+    out["bin_sia"] = subprocess.run(["ls", "-la", "/usr/local/bin/"], capture_output=True, text=True).stdout
+    out["bin_sia"] = [ln for ln in out["bin_sia"].splitlines() if "sia" in ln.lower()]
 
     task = Path(TASK_DIR)
     out["task_md"] = (task / "data/public/task.md").exists()
@@ -84,7 +93,45 @@ def validate() -> dict:
     return out
 
 
-@app.function(image=sia_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=5400, cpu=4.0)
+@app.function(image=sia_image, secrets=[modal.Secret.from_name("anthropic-api")], timeout=120)
+def claude_check() -> dict:
+    """Surface the real Claude CLI error (the SDK hides it behind 'check stderr')."""
+    import os
+    import subprocess
+
+    out = {"key_present": bool(os.environ.get("ANTHROPIC_API_KEY")),
+           "key_prefix": os.environ.get("ANTHROPIC_API_KEY", "")[:8]}
+    which = subprocess.run(["which", "claude"], capture_output=True, text=True)
+    out["claude_path"] = which.stdout.strip() or which.stderr.strip()
+    v = subprocess.run(["claude", "--version"], capture_output=True, text=True)
+    out["version"] = (v.stdout + v.stderr).strip()[:80]
+    sdk_ver = subprocess.run(["python", "-c", "import claude_agent_sdk as c; print(c.__version__)"],
+                             capture_output=True, text=True)
+    out["claude_agent_sdk"] = (sdk_ver.stdout + sdk_ver.stderr).strip()[:60]
+    try:
+        # Mimic the SDK's streaming/control mode to surface the real failure.
+        p = subprocess.run(
+            ["claude", "--print", "--output-format", "stream-json", "--verbose",
+             "--model", "sonnet", "--permission-mode", "bypassPermissions", "say OK"],
+            capture_output=True, text=True, timeout=90,
+            env={**os.environ, "IS_SANDBOX": "1"})  # allow --dangerously-skip-permissions as root
+        out["stream_rc"] = p.returncode
+        out["stream_out"] = p.stdout[-400:]
+        out["stream_err"] = p.stderr[-1500:]
+    except Exception as e:  # noqa: BLE001
+        out["stream_exc"] = str(e)
+    return out
+
+
+@app.local_entrypoint()
+def claude_check_entry():
+    print(json.dumps(claude_check.remote(), indent=2))
+
+
+@app.function(image=sia_image,
+              secrets=[modal.Secret.from_name("fireworks-api"),   # target (Kimi)
+                       modal.Secret.from_name("anthropic-api")],  # meta (Claude Agent SDK)
+              timeout=5400, cpu=4.0)
 def sia_run_remote(
     max_gen: int, run_id: int, target_model: str, meta_model: str,
     n_candidates: int, temperature: float, max_repair: int, meta_max_turns: int,
@@ -102,7 +149,7 @@ def sia_run_remote(
 
     # Inject the chosen models into the profiles (single provider: fireworks).
     _patch_profile(task / "profiles/fireworks-target.json", target_model)
-    _patch_profile(task / "profiles/fireworks-meta.json", meta_model)
+    _patch_profile(task / "profiles/claude-meta.json", meta_model)
 
     work = Path("/root/work")
     work.mkdir(parents=True, exist_ok=True)
@@ -113,16 +160,26 @@ def sia_run_remote(
     # Give the meta/feedback agent enough tool turns to read context + write the
     # full target_agent.py (the default cap of 20 is too few).
     env["SIA_MAX_TURNS"] = str(meta_max_turns)
+    # Quiet the litellm/httpx per-request chatter so SIA's stage logs + our
+    # [HARNESS]/[SIM]/[FOOTPRINT] markers are actually visible in the stream.
+    env["LITELLM_LOG"] = "ERROR"
+    env["LITELLM_VERBOSE"] = "False"
+    # The Claude Agent SDK passes --dangerously-skip-permissions, which the CLI
+    # refuses as root (Modal runs as root). IS_SANDBOX=1 is the sanctioned bypass.
+    env["IS_SANDBOX"] = "1"
     # Harness knobs the seed agent reads (the search space SIA then evolves).
     env["COLOGIC_TARGET_MODEL"] = target_model
     env["COLOGIC_N_CANDIDATES"] = str(n_candidates)
     env["COLOGIC_TEMPERATURE"] = str(temperature)
     env["COLOGIC_MAX_REPAIR"] = str(max_repair)
 
+    # Invoke SIA's entry point directly (the console script isn't reliably on PATH and
+    # the published package has no __main__); run args fall through as sys.argv.
     cmd = [
-        "sia", "run", "--task_dir", str(task), "--max_gen", str(max_gen),
+        "python", "-c", "from sia.orchestrator import main; main()",
+        "run", "--task_dir", str(task), "--max_gen", str(max_gen),
         "--run_id", str(run_id), "--no-web",
-        "--meta-agent-profile", "fireworks-meta",
+        "--meta-agent-profile", "claude-meta",
         "--target-agent-profile", "fireworks-target",
     ]
     print(f"[SIA] launching {max_gen} generations on {len(_public_designs())} designs "
@@ -201,7 +258,7 @@ def main(
     max_gen: int = 2,
     run_id: int = 1,
     target_model: str = "accounts/fireworks/models/kimi-k2p7-code",
-    meta_model: str = "accounts/fireworks/models/kimi-k2p7-code",
+    meta_model: str = "sonnet",  # Claude alias for the meta/feedback agent
     n_candidates: int = 4,
     temperature: float = 0.9,
     max_repair: int = 1,
