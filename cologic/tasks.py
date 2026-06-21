@@ -977,5 +977,237 @@ GRADIENT_TASKS: list[Task] = [
     ),
 ]
 
-SEED_TASKS: list[Task] = TRAIN_TASKS + HELDOUT_TASKS + GRADIENT_TASKS
+# --- Hard task: real EDA design with genuine headroom -----------------------
+# The ho_* heldout tasks are saturated (frontier models pass single-shot), so
+# they show no uplift. This 2-lane round-robin ready/valid FIFO arbiter is a
+# real EDA design (sequential + arbitration + no-latch constraint) where weak
+# models actually fail. Golden reference is the verified stream_arb_fifo from
+# cologic-verilog/.../stream_arb_fifo_golden.sv. Clocked equivalence grading:
+# candidate and golden get identical random stimulus, outputs compared per cycle.
+
+STREAM_ARB_FIFO_REF = r"""module stream_arb_fifo #(
+    parameter int width_p = 8,
+    parameter int depth_p = 8,
+    parameter int count_width_lp = $clog2(depth_p + 1),
+    parameter int addr_width_lp = $clog2(depth_p)
+) (
+    input  logic                    clk_i,
+    input  logic                    reset_i,
+
+    input  logic [width_p-1:0]      data0_i,
+    input  logic                    valid0_i,
+    output logic                    ready0_o,
+
+    input  logic [width_p-1:0]      data1_i,
+    input  logic                    valid1_i,
+    output logic                    ready1_o,
+
+    output logic                    valid_o,
+    output logic [width_p-1:0]      data_o,
+    input  logic                    yumi_i,
+
+    output logic [count_width_lp-1:0] count_o,
+    output logic                    selected_lane_o
+);
+    localparam logic [count_width_lp-1:0] depth_count_lp = count_width_lp'(depth_p);
+    localparam logic [addr_width_lp-1:0] last_addr_lp = addr_width_lp'(depth_p - 1);
+
+    logic [width_p-1:0] mem [0:depth_p-1];
+    logic [addr_width_lp-1:0] wr_ptr_r;
+    logic [addr_width_lp-1:0] rd_ptr_r;
+    logic [count_width_lp-1:0] count_r;
+    logic rr_next_r;
+    logic can_accept;
+    logic push0;
+    logic push1;
+    logic push_fire;
+    logic pop_fire;
+
+    assign count_o = count_r;
+    assign valid_o = (count_r != '0);
+    assign data_o = mem[rd_ptr_r];
+    assign pop_fire = yumi_i && valid_o;
+    assign can_accept = (count_r < depth_count_lp) || pop_fire;
+
+    always_comb begin
+        ready0_o = 1'b0;
+        ready1_o = 1'b0;
+        selected_lane_o = 1'b0;
+        if (can_accept) begin
+            if (valid0_i && valid1_i) begin
+                ready0_o = !rr_next_r;
+                ready1_o = rr_next_r;
+                selected_lane_o = rr_next_r;
+            end else if (valid0_i) begin
+                ready0_o = 1'b1;
+                selected_lane_o = 1'b0;
+            end else if (valid1_i) begin
+                ready1_o = 1'b1;
+                selected_lane_o = 1'b1;
+            end
+        end
+    end
+
+    assign push0 = ready0_o && valid0_i;
+    assign push1 = ready1_o && valid1_i;
+    assign push_fire = push0 || push1;
+
+    function automatic logic [addr_width_lp-1:0] incr_ptr(
+        input logic [addr_width_lp-1:0] ptr
+    );
+        if (ptr == last_addr_lp) begin
+            incr_ptr = '0;
+        end else begin
+            incr_ptr = ptr + addr_width_lp'(1);
+        end
+    endfunction
+
+    always_ff @(posedge clk_i) begin
+        if (reset_i) begin
+            wr_ptr_r <= '0;
+            rd_ptr_r <= '0;
+            count_r <= '0;
+            rr_next_r <= 1'b0;
+        end else begin
+            if (push_fire) begin
+                mem[wr_ptr_r] <= push0 ? data0_i : data1_i;
+                wr_ptr_r <= incr_ptr(wr_ptr_r);
+                rr_next_r <= push0;
+            end
+
+            if (pop_fire) begin
+                rd_ptr_r <= incr_ptr(rd_ptr_r);
+            end
+
+            unique case ({push_fire, pop_fire})
+                2'b10: count_r <= count_r + count_width_lp'(1);
+                2'b01: count_r <= count_r - count_width_lp'(1);
+                default: count_r <= count_r;
+            endcase
+        end
+    end
+endmodule
+"""
+
+# Clocked equivalence TB: drive candidate and golden with identical random
+# handshake stimulus, compare all observable outputs every cycle with `===`
+# (an X on the candidate counts as a mismatch -> catches combinational latches).
+STREAM_ARB_FIFO_TB = r"""// auto-generated testbench for task __TASK_ID__
+module tb;
+  localparam int width_p = 8;
+  localparam int depth_p = 8;
+  localparam int cw = $clog2(depth_p + 1);
+
+  logic clk = 0;
+  logic reset_i;
+  logic [width_p-1:0] data0_i, data1_i;
+  logic valid0_i, valid1_i, yumi_i;
+
+  wire ready0_o__c, ready1_o__c, valid_o__c, selected_lane_o__c;
+  wire ready0_o__r, ready1_o__r, valid_o__r, selected_lane_o__r;
+  wire [width_p-1:0] data_o__c, data_o__r;
+  wire [cw-1:0] count_o__c, count_o__r;
+
+  __DUT__ dut_c (
+      .clk_i(clk), .reset_i(reset_i),
+      .data0_i(data0_i), .valid0_i(valid0_i), .ready0_o(ready0_o__c),
+      .data1_i(data1_i), .valid1_i(valid1_i), .ready1_o(ready1_o__c),
+      .valid_o(valid_o__c), .data_o(data_o__c), .yumi_i(yumi_i),
+      .count_o(count_o__c), .selected_lane_o(selected_lane_o__c)
+  );
+  __REF__ dut_r (
+      .clk_i(clk), .reset_i(reset_i),
+      .data0_i(data0_i), .valid0_i(valid0_i), .ready0_o(ready0_o__r),
+      .data1_i(data1_i), .valid1_i(valid1_i), .ready1_o(ready1_o__r),
+      .valid_o(valid_o__r), .data_o(data_o__r), .yumi_i(yumi_i),
+      .count_o(count_o__r), .selected_lane_o(selected_lane_o__r)
+  );
+
+  always #5 clk = ~clk;
+
+  integer passed = 0;
+  integer total = 0;
+  integer i;
+
+  task automatic check_outputs;
+    begin
+      total += 1; if (ready0_o__c        === ready0_o__r)        passed += 1;
+      total += 1; if (ready1_o__c        === ready1_o__r)        passed += 1;
+      total += 1; if (valid_o__c         === valid_o__r)         passed += 1;
+      total += 1; if (count_o__c         === count_o__r)         passed += 1;
+      total += 1; if (selected_lane_o__c === selected_lane_o__r) passed += 1;
+      // data_o is only architecturally defined when the reference FIFO is non-empty.
+      total += 1; if (!valid_o__r || (data_o__c === data_o__r))  passed += 1;
+    end
+  endtask
+
+  initial begin
+    void'($urandom(__SEED__));
+    reset_i = 1'b1; valid0_i = 0; valid1_i = 0; yumi_i = 0; data0_i = 0; data1_i = 0;
+    repeat (3) @(posedge clk);
+    #1; reset_i = 1'b0;
+
+    for (i = 0; i < __N_VECTORS__; i = i + 1) begin
+      data0_i  = $urandom;
+      data1_i  = $urandom;
+      valid0_i = $urandom & 1;
+      valid1_i = $urandom & 1;
+      yumi_i   = $urandom & 1;
+      #1;                 // let combinational outputs settle on the new inputs
+      check_outputs();
+      @(posedge clk);
+      #1;
+    end
+
+    $display("RESULT %0d %0d", passed, total);
+    $finish;
+  end
+endmodule
+"""
+
+HARD_TASKS: list[Task] = [
+    Task(
+        task_id="stream_arb_fifo",
+        top_module="stream_arb_fifo",
+        spec=(
+            "Implement a synthesizable two-lane, single-output ready/valid FIFO "
+            "arbiter named `stream_arb_fifo`, width 8, depth 8, with synchronous "
+            "active-high reset (`reset_i`). Two input lanes (data0_i/valid0_i/"
+            "ready0_o and data1_i/valid1_i/ready1_o) feed one FIFO drained through "
+            "valid_o/data_o/yumi_i. Requirements: assert ready on a lane only when "
+            "the FIFO can accept (not full, OR a pop fires this cycle so a slot frees); "
+            "accept either lone valid lane; when BOTH lanes are valid, round-robin "
+            "arbitrate (alternate which lane wins on successive accepts, starting with "
+            "lane 0 after reset); push the selected lane's data and advance the write "
+            "pointer; pop on `yumi_i && valid_o`; allow a simultaneous full pop+push in "
+            "one cycle; maintain `count_o` and assert `valid_o` whenever the FIFO is "
+            "non-empty; drive `selected_lane_o` to the lane being accepted (0 when idle); "
+            "and avoid all combinational latches (every output assigned on every path)."
+        ),
+        interface=[
+            Port("clk_i", "input", 1),
+            Port("reset_i", "input", 1),
+            Port("data0_i", "input", 8),
+            Port("valid0_i", "input", 1),
+            Port("ready0_o", "output", 1),
+            Port("data1_i", "input", 8),
+            Port("valid1_i", "input", 1),
+            Port("ready1_o", "output", 1),
+            Port("valid_o", "output", 1),
+            Port("data_o", "output", 8),
+            Port("yumi_i", "input", 1),
+            Port("count_o", "output", 4),
+            Port("selected_lane_o", "output", 1),
+        ],
+        reference_rtl=STREAM_ARB_FIFO_REF,
+        n_vectors=96,
+        seed=3,
+        clocked=True,
+        testbench_template=STREAM_ARB_FIFO_TB,
+        held_out=True,
+        tags=["clocked", "hard", "eda", "fifo", "arbiter", "ready-valid", "round-robin"],
+    ),
+]
+
+SEED_TASKS: list[Task] = TRAIN_TASKS + HELDOUT_TASKS + GRADIENT_TASKS + HARD_TASKS
 BY_ID = {t.task_id: t for t in SEED_TASKS}
