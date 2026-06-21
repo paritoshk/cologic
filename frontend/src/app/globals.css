@@ -127,6 +127,9 @@
   }
   html {
     @apply font-sans;
+    /* discrete full-screen "views" instead of one long meandering scroll */
+    scroll-snap-type: y proximity;
+    scroll-padding-top: 84px; /* clear the sticky navbar when snapping/anchoring */
   }
 }
 @layer base {

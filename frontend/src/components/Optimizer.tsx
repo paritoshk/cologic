@@ -6,13 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CodeBox } from "./CodeBox";
-import { Lattice } from "./Lattice";
+import { useOptOutcome } from "@/lib/opt-context";
 import {
   runOptimize,
   SAMPLE_RTL,
   SAMPLE_NAME,
   DEFAULT_TOKEN,
-  type OptOutcome,
 } from "@/lib/optimizer";
 
 export function Optimizer() {
@@ -22,7 +21,7 @@ export function Optimizer() {
   const [token, setToken] = useState(DEFAULT_TOKEN);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string>("");
-  const [outcome, setOutcome] = useState<OptOutcome | null>(null);
+  const { outcome, setOutcome } = useOptOutcome();
   const [error, setError] = useState<string>("");
   const abort = useRef<AbortController | null>(null);
 
@@ -138,9 +137,6 @@ export function Optimizer() {
 
         {/* output */}
         <div className="space-y-4">
-          {running && !outcome && (
-            <Lattice live caption={log || "agents optimizing…"} />
-          )}
           {!outcome && !running && (
             <div className="rounded-lg border border-dashed border-border bg-card/50 p-8 text-center text-muted-foreground font-[family-name:var(--font-jet)] text-sm">
               results appear here: gate count, equivalence, optimized Verilog.

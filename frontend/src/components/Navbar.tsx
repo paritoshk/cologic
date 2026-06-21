@@ -8,7 +8,7 @@ import { Menu, X } from "lucide-react";
 const LINKS = [
   { label: "Optimizer", href: "#optimizer" },
   { label: "Benchmark", href: "#benchmark" },
-  { label: "Foundry", href: "#showcase" },
+  { label: "Forge", href: "#showcase" },
 ];
 
 export function Navbar() {
