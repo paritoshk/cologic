@@ -37,13 +37,19 @@ def _designs() -> list[dict]:
 
 
 def evaluate(gen_dir: Path) -> dict:
-    from cologic.grader import grade
+    import modal
+
     from cologic.schema import Port
     from cologic.upload import task_from_rtl
 
+    # The immutable verifier (Verilator + Yosys) is the deployed Modal function —
+    # we never carry the toolchain here; we call it by name.
+    grader = modal.Function.from_name("rl-hdl", "grade_opt_remote")
     sub_dir = gen_dir / "submission"
     designs = []
-    for d in _designs():
+    entries = _designs()
+    print(f"[EVAL] scoring {len(entries)} submitted designs via the deployed verifier", flush=True)
+    for d in entries:
         interface = [Port(**p) for p in d["ports"]] if d["ports"] else None
         task = task_from_rtl(
             d["rtl"], task_id=d["id"], top_module=d["top_module"],
@@ -51,15 +57,22 @@ def evaluate(gen_dir: Path) -> dict:
         )
         f = sub_dir / f"{d['id']}.v"
         if not f.exists():
+            print(f"[EVAL] {d['id']}: no submission (missing)", flush=True)
             designs.append({"id": d["id"], "reward": 0.0, "stage": "missing",
                             "equivalent": False, "ref_cells": None, "cand_cells": None,
                             "area_improvement": None, "ref_area_um2": None,
                             "cand_area_um2": None, "area_um2_improvement": None})
             continue
-        r = grade(f.read_text(), task)
-        i = r.info
+        gr = grader.remote(f.read_text(), task)  # {"reward", "info", "task_id"}
+        i = gr["info"]
+        cells = (f"{i.get('ref_cells')}->{i.get('cand_cells')}"
+                 if i.get("cand_cells") is not None else "n/a")
+        ai = i.get("area_improvement")
+        ai_s = f" ({ai * 100:+.1f}%)" if ai is not None else ""
+        print(f"[EVAL] {d['id']}: equiv={bool(i.get('equivalent'))} cells {cells}{ai_s} "
+              f"reward={gr['reward']:.3f}", flush=True)
         designs.append({
-            "id": d["id"], "reward": r.reward, "stage": i.get("stage"),
+            "id": d["id"], "reward": gr["reward"], "stage": i.get("stage"),
             "equivalent": bool(i.get("equivalent")),
             "ref_cells": i.get("ref_cells"), "cand_cells": i.get("cand_cells"),
             "area_improvement": i.get("area_improvement"),
@@ -74,7 +87,7 @@ def evaluate(gen_dir: Path) -> dict:
              if d["equivalent"] and d["area_improvement"] is not None]
     um2_gains = [d["area_um2_improvement"] for d in designs
                  if d["equivalent"] and d["area_um2_improvement"] is not None]
-    return {
+    summary = {
         # Top-level scalars are the SIA self-improvement signal.
         "mean_reward": round(sum(rewards) / len(rewards), 6) if rewards else 0.0,
         "mean_area_improvement": round(sum(gains) / len(gains), 6) if gains else 0.0,
@@ -85,6 +98,11 @@ def evaluate(gen_dir: Path) -> dict:
         "n_total": len(designs),
         "designs": designs,
     }
+    print(f"[FOOTPRINT] generation: mean_area_improvement="
+          f"{summary['mean_area_improvement'] * 100:+.1f}% "
+          f"equiv={summary['n_equivalent']}/{summary['n_total']} "
+          f"mean_reward={summary['mean_reward']:.3f}", flush=True)
+    return summary
 
 
 def main() -> None:
