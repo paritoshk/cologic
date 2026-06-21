@@ -49,8 +49,11 @@ class Task:
     n_vectors: int = 64
     seed: int = 1
     held_out: bool = False
-    # Combinational only for v1. Clocked designs (clk/reset) come later.
+    # Most v1 tasks are combinational. Clocked tasks use a task-specific
+    # self-checking testbench while preserving the public grade() seam.
     clocked: bool = False
+    testbench_template: str | None = None
+    allow_extra_modules: bool = False
     tags: list[str] = field(default_factory=list)
 
     @property
@@ -81,7 +84,7 @@ class GradeResult:
       stage        : "no_module" | "compile_error" | "sim_error" | "graded"
       compiled     : bool
       passed       : int   (output comparisons that matched)
-      total        : int   (output comparisons attempted)
+      total        : int   (output comparisons run)
       log          : str   (tool stderr/stdout, truncated)
     """
 

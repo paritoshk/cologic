@@ -40,14 +40,24 @@ just reseed the random vectors.
 
 ## Tasks
 
-`rl_hdl/tasks.py` ships two splits (combinational only for v1):
+`rl_hdl/tasks.py` ships training tasks, held-out tasks, and converted
+verified-gradient tasks:
 
-- **`TRAIN_TASKS`** (10): mux2, mux4, add4, cmp8, alu8, dec3to8, popcount8, shl8,
+- **`TRAIN_TASKS`**: mux2, mux4, add4, cmp8, alu8, dec3to8, popcount8, shl8,
   absdiff8, bin2gray8.
-- **`HELDOUT_TASKS`** (6): perturbed variants — widened/narrowed, renamed ports
-  and modules, recombined functions, and one true inverse (gray→bin). These give
-  the **headline** number: warm-start models may have seen public benchmarks, so
+- **`HELDOUT_TASKS`**: perturbed variants — widened/narrowed, renamed ports
+  and modules, recombined functions, and an inverse (gray→bin). These give
+  the **headline** metric: warm-start models may have seen public benchmarks, so
   the gain is measured on structurally novel tasks.
+- **`GRADIENT_TASKS`**: clocked TPU-like matrix-multiply tasks distilled
+  from real verified gradients in `YashKarthik/tpu`. One checks that repeated
+  matrix multiplies do not reuse stale accumulator state; the other checks signed
+  matrix elements and output-select control.
+
+The repo also includes a documented seed mining corpus in
+`data/verified_gradients.jsonl`, with reproducible provenance for real-repo RTL
+gradients and links from mined gradients to the native `rl-hdl` tasks converted
+from them.
 
 Every task's golden reference is smoke-tested to self-grade to `1.0`, which
 catches a malformed reference before it can poison training.

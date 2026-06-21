@@ -1,5 +1,5 @@
-"""Seed task library (combinational v1). Each task carries a golden reference
-used as the grading oracle (see verifier.grade).
+"""Seed task library. Each task carries a golden reference used as the grading
+oracle (see verifier.grade).
 
 Two splits:
   TRAIN_TASKS   - what the policy trains/evals on during development.
@@ -284,5 +284,382 @@ HELDOUT_TASKS: list[Task] = [
     ),
 ]
 
-SEED_TASKS: list[Task] = TRAIN_TASKS + HELDOUT_TASKS
+TPU_REPEATED_MATMUL_TB = r"""
+// auto-generated testbench for task __TASK_ID__
+module tb;
+  logic clk = 0;
+  logic rst_n;
+  logic ena;
+  logic [7:0] ui_in;
+  logic [7:0] uio_in;
+  wire [7:0] uo_out__c, uo_out__r;
+  wire [7:0] uio_out__c, uio_out__r;
+  wire [7:0] uio_oe__c, uio_oe__r;
+
+  __DUT__ dut_c (
+      .ui_in(ui_in), .uo_out(uo_out__c), .uio_in(uio_in),
+      .uio_out(uio_out__c), .uio_oe(uio_oe__c), .ena(ena),
+      .clk(clk), .rst_n(rst_n)
+  );
+  __REF__ dut_r (
+      .ui_in(ui_in), .uo_out(uo_out__r), .uio_in(uio_in),
+      .uio_out(uio_out__r), .uio_oe(uio_oe__r), .ena(ena),
+      .clk(clk), .rst_n(rst_n)
+  );
+
+  always #5 clk = ~clk;
+
+  integer passed = 0;
+  integer total = 0;
+  integer scenario;
+  integer i;
+  integer unused;
+  logic [7:0] a [0:3];
+  logic [7:0] b [0:3];
+
+  task reset_all;
+    begin
+      ena = 1'b1;
+      ui_in = 8'd0;
+      uio_in = 8'd0;
+      rst_n = 1'b0;
+      repeat (5) @(posedge clk);
+      rst_n = 1'b1;
+      repeat (2) @(posedge clk);
+    end
+  endtask
+
+  task load_elem(input integer sel, input integer idx, input [7:0] value);
+    begin
+      ui_in = value;
+      uio_in = ((sel & 1) << 1) | ((idx & 3) << 2) | 1;
+      @(posedge clk);
+      #1;
+      uio_in = 8'd0;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task load_current_matrices;
+    begin
+      for (i = 0; i < 4; i = i + 1) begin
+        load_elem(0, i, a[i]);
+      end
+      for (i = 0; i < 4; i = i + 1) begin
+        load_elem(1, i, b[i]);
+      end
+    end
+  endtask
+
+  task compare_outputs(input integer phase);
+    begin
+      repeat (3) @(posedge clk);
+      for (i = 0; i < 4; i = i + 1) begin
+        uio_in = ((i & 3) << 5) | (1 << 4);
+        @(posedge clk);
+        #1;
+        total += 1;
+        if (uo_out__c === uo_out__r) begin
+          passed += 1;
+        end else begin
+          $display("MISMATCH scenario=%0d phase=%0d output=%0d candidate=%0d reference=%0d",
+                   scenario, phase, i, $signed(uo_out__c), $signed(uo_out__r));
+        end
+        uio_in = 8'd0;
+        @(posedge clk);
+        #1;
+      end
+    end
+  endtask
+
+  initial begin
+    unused = $urandom(__SEED__);
+    reset_all();
+
+    for (scenario = 0; scenario < __N_VECTORS__; scenario = scenario + 1) begin
+      for (i = 0; i < 4; i = i + 1) begin
+        a[i] = $urandom_range(0, 7);
+        b[i] = $urandom_range(0, 7);
+      end
+      load_current_matrices();
+      compare_outputs(0);
+
+      for (i = 0; i < 4; i = i + 1) begin
+        a[i] = $urandom_range(0, 7);
+        b[i] = $urandom_range(0, 7);
+      end
+      load_current_matrices();
+      compare_outputs(1);
+
+      reset_all();
+    end
+
+    $display("RESULT %0d %0d", passed, total);
+    $finish;
+  end
+endmodule
+"""
+
+TPU_REPEATED_MATMUL_REF = r"""
+module tt_um_tpu (
+    input  wire [7:0] ui_in,
+    output wire [7:0] uo_out,
+    input  wire [7:0] uio_in,
+    output wire [7:0] uio_out,
+    output wire [7:0] uio_oe,
+    input  wire       ena,
+    input  wire       clk,
+    input  wire       rst_n
+);
+    reg signed [7:0] a0, a1, a2, a3;
+    reg signed [7:0] b0, b1, b2, b3;
+
+    wire load_en = uio_in[0];
+    wire load_sel_b = uio_in[1];
+    wire [1:0] load_index = uio_in[3:2];
+    wire output_en = uio_in[4];
+    wire [1:0] output_sel = uio_in[6:5];
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            a0 <= 8'sd0; a1 <= 8'sd0; a2 <= 8'sd0; a3 <= 8'sd0;
+            b0 <= 8'sd0; b1 <= 8'sd0; b2 <= 8'sd0; b3 <= 8'sd0;
+        end else if (load_en) begin
+            if (!load_sel_b) begin
+                case (load_index)
+                    2'd0: a0 <= ui_in;
+                    2'd1: a1 <= ui_in;
+                    2'd2: a2 <= ui_in;
+                    2'd3: a3 <= ui_in;
+                endcase
+            end else begin
+                case (load_index)
+                    2'd0: b0 <= ui_in;
+                    2'd1: b1 <= ui_in;
+                    2'd2: b2 <= ui_in;
+                    2'd3: b3 <= ui_in;
+                endcase
+            end
+        end
+    end
+
+    wire signed [15:0] c00 = a0 * b0 + a1 * b2;
+    wire signed [15:0] c01 = a0 * b1 + a1 * b3;
+    wire signed [15:0] c10 = a2 * b0 + a3 * b2;
+    wire signed [15:0] c11 = a2 * b1 + a3 * b3;
+
+    reg [7:0] selected;
+    always @(*) begin
+        case (output_sel)
+            2'd0: selected = c00[7:0];
+            2'd1: selected = c01[7:0];
+            2'd2: selected = c10[7:0];
+            2'd3: selected = c11[7:0];
+        endcase
+    end
+
+    assign uo_out = output_en ? selected : 8'd0;
+    assign uio_out = {output_en, 7'b0};
+    assign uio_oe = 8'b1000_0000;
+
+    wire _unused = &{ena, uio_in[7]};
+endmodule
+"""
+
+TPU_SIGNED_OUTPUT_TB = r"""
+// auto-generated testbench for task __TASK_ID__
+module tb;
+  logic clk = 0;
+  logic rst_n;
+  logic ena;
+  logic [7:0] ui_in;
+  logic [7:0] uio_in;
+  wire [7:0] uo_out__c, uo_out__r;
+  wire [7:0] uio_out__c, uio_out__r;
+  wire [7:0] uio_oe__c, uio_oe__r;
+
+  __DUT__ dut_c (
+      .ui_in(ui_in), .uo_out(uo_out__c), .uio_in(uio_in),
+      .uio_out(uio_out__c), .uio_oe(uio_oe__c), .ena(ena),
+      .clk(clk), .rst_n(rst_n)
+  );
+  __REF__ dut_r (
+      .ui_in(ui_in), .uo_out(uo_out__r), .uio_in(uio_in),
+      .uio_out(uio_out__r), .uio_oe(uio_oe__r), .ena(ena),
+      .clk(clk), .rst_n(rst_n)
+  );
+
+  always #5 clk = ~clk;
+
+  integer passed = 0;
+  integer total = 0;
+  integer scenario;
+  integer i;
+  logic [7:0] a [0:3];
+  logic [7:0] b [0:3];
+
+  task reset_all;
+    begin
+      ena = 1'b1;
+      ui_in = 8'd0;
+      uio_in = 8'd0;
+      rst_n = 1'b0;
+      repeat (5) @(posedge clk);
+      rst_n = 1'b1;
+      repeat (2) @(posedge clk);
+    end
+  endtask
+
+  task load_elem(input integer sel, input integer idx, input [7:0] value);
+    begin
+      ui_in = value;
+      uio_in = ((sel & 1) << 1) | ((idx & 3) << 2) | 1;
+      @(posedge clk);
+      #1;
+      uio_in = 8'd0;
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  task load_current_matrices;
+    begin
+      for (i = 0; i < 4; i = i + 1) begin
+        load_elem(0, i, a[i]);
+      end
+      for (i = 0; i < 4; i = i + 1) begin
+        load_elem(1, i, b[i]);
+      end
+    end
+  endtask
+
+  task compare_all_outputs;
+    begin
+      repeat (3) @(posedge clk);
+      for (i = 0; i < 4; i = i + 1) begin
+        uio_in = ((i & 3) << 5) | (1 << 4);
+        @(posedge clk);
+        #1;
+        total += 1;
+        if (uo_out__c === uo_out__r) begin
+          passed += 1;
+        end else begin
+          $display("MISMATCH scenario=%0d output=%0d candidate=%0d reference=%0d",
+                   scenario, i, $signed(uo_out__c), $signed(uo_out__r));
+        end
+        uio_in = 8'd0;
+        @(posedge clk);
+        #1;
+      end
+    end
+  endtask
+
+  task set_scenario(input integer id);
+    begin
+      scenario = id;
+      case (id)
+        0: begin
+          a[0] = 8'sd1;  a[1] = 8'sd2;  a[2] = 8'sd3;  a[3] = 8'sd4;
+          b[0] = 8'sd5;  b[1] = 8'sd6;  b[2] = 8'sd7;  b[3] = 8'sd8;
+        end
+        1: begin
+          a[0] = -8'sd3; a[1] = 8'sd4;  a[2] = 8'sd5;  a[3] = -8'sd6;
+          b[0] = 8'sd7;  b[1] = -8'sd8; b[2] = 8'sd9;  b[3] = 8'sd10;
+        end
+        2: begin
+          a[0] = -8'sd8; a[1] = -8'sd7; a[2] = 8'sd6;  a[3] = 8'sd5;
+          b[0] = 8'sd4;  b[1] = -8'sd3; b[2] = -8'sd2; b[3] = 8'sd1;
+        end
+        default: begin
+          a[0] = 8'sd12; a[1] = -8'sd11; a[2] = -8'sd10; a[3] = 8'sd9;
+          b[0] = -8'sd6; b[1] = 8'sd5;   b[2] = 8'sd4;    b[3] = -8'sd3;
+        end
+      endcase
+    end
+  endtask
+
+  initial begin
+    reset_all();
+
+    for (scenario = 0; scenario < 4; scenario = scenario + 1) begin
+      set_scenario(scenario);
+      load_current_matrices();
+      compare_all_outputs();
+      reset_all();
+    end
+
+    $display("RESULT %0d %0d", passed, total);
+    $finish;
+  end
+endmodule
+"""
+
+GRADIENT_TASKS: list[Task] = [
+    Task(
+        task_id="vg_tpu_repeated_matmul2x2",
+        top_module="tt_um_tpu",
+        spec=(
+            "Implement a Tiny Tapeout-style 2x2 matrix multiply accelerator. "
+            "`ui_in` carries one signed 8-bit matrix element. When `uio_in[0]` "
+            "is high on a clock edge, store `ui_in` into matrix A if `uio_in[1]` "
+            "is 0 or matrix B if `uio_in[1]` is 1; `uio_in[3:2]` selects the "
+            "row-major element index. When `uio_in[4]` is high, output the "
+            "selected low 8 bits of A*B on `uo_out`, with `uio_in[6:5]` selecting "
+            "C00, C01, C10, or C11. Repeated matrix multiplies must be independent: "
+            "loading a new A and B must not accumulate stale partial sums from a "
+            "previous multiplication."
+        ),
+        interface=[
+            Port("ui_in", "input", 8),
+            Port("uo_out", "output", 8),
+            Port("uio_in", "input", 8),
+            Port("uio_out", "output", 8),
+            Port("uio_oe", "output", 8),
+            Port("ena", "input", 1),
+            Port("clk", "input", 1),
+            Port("rst_n", "input", 1),
+        ],
+        reference_rtl=TPU_REPEATED_MATMUL_REF,
+        n_vectors=16,
+        seed=6,
+        clocked=True,
+        testbench_template=TPU_REPEATED_MATMUL_TB,
+        allow_extra_modules=True,
+        tags=["clocked", "verified-gradient", "tpu", "systolic-array", "matmul"],
+    ),
+    Task(
+        task_id="vg_tpu_signed_outputs2x2",
+        top_module="tt_um_tpu",
+        spec=(
+            "Implement a Tiny Tapeout-style 2x2 signed matrix multiply accelerator. "
+            "`ui_in` carries one signed 8-bit matrix element. When `uio_in[0]` is "
+            "high on a clock edge, store `ui_in` into matrix A if `uio_in[1]` is "
+            "0 or matrix B if `uio_in[1]` is 1; `uio_in[3:2]` selects the row-major "
+            "element index. When `uio_in[4]` is high, output the selected low 8 bits "
+            "of A*B on `uo_out`, with `uio_in[6:5]` selecting C00, C01, C10, or C11. "
+            "The design must treat loaded matrix elements as signed values and each "
+            "output select must return the corresponding matrix product element."
+        ),
+        interface=[
+            Port("ui_in", "input", 8),
+            Port("uo_out", "output", 8),
+            Port("uio_in", "input", 8),
+            Port("uio_out", "output", 8),
+            Port("uio_oe", "output", 8),
+            Port("ena", "input", 1),
+            Port("clk", "input", 1),
+            Port("rst_n", "input", 1),
+        ],
+        reference_rtl=TPU_REPEATED_MATMUL_REF,
+        n_vectors=4,
+        seed=8,
+        clocked=True,
+        testbench_template=TPU_SIGNED_OUTPUT_TB,
+        allow_extra_modules=True,
+        tags=["clocked", "verified-gradient", "tpu", "systolic-array", "signed", "matmul"],
+    ),
+]
+
+SEED_TASKS: list[Task] = TRAIN_TASKS + HELDOUT_TASKS + GRADIENT_TASKS
 BY_ID = {t.task_id: t for t in SEED_TASKS}
