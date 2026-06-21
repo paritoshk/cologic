@@ -52,6 +52,9 @@ class Task:
     # Combinational only for v1. Clocked designs (clk/reset) come later.
     clocked: bool = False
     tags: list[str] = field(default_factory=list)
+    # Per-task generation budget (overrides the global default); larger designs
+    # need more room. None -> fall back to the global RLHDL_MAX_TOKENS / default.
+    max_tokens: int | None = None
 
     @property
     def inputs(self) -> list[Port]:

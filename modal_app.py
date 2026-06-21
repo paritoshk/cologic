@@ -69,19 +69,22 @@ def list_models(substr: str = "") -> list[str]:
     return sorted(i for i in ids if substr.lower() in i.lower())
 
 
-@app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=600)
-def sample_remote(task, n: int, model: str, max_tokens: int) -> list[dict]:
+@app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=900)
+def sample_remote(task, n: int, model: str, max_tokens: int | None) -> list[dict]:
     """Sample `n` completions for one task from Fireworks, inside Modal.
 
-    Each item is {text, finish_reason} so the caller can see truncation.
+    Budget resolves per-task (override > Task.max_tokens > env > default) and
+    auto-grows on truncation. Each item is {text, finish_reason, budget}.
     """
-    from rl_hdl.inference import complete_raw
+    from rl_hdl.inference import sample_until_complete
 
     temperature = 0.0 if n == 1 else 0.7  # greedy for a stable n=1 baseline read
     out = []
     for _ in range(n):
-        text, finish = complete_raw(task, model=model, temperature=temperature, max_tokens=max_tokens)
-        out.append({"text": text, "finish_reason": finish})
+        text, finish, budget = sample_until_complete(
+            task, model=model, temperature=temperature, max_tokens=max_tokens
+        )
+        out.append({"text": text, "finish_reason": finish, "budget": budget})
     return out
 
 
@@ -92,6 +95,7 @@ def main(
     selftest: bool = False,
     out: str = "baseline.json",
     dump: str = "",
+    max_tokens: int = 0,
 ):
     from collections import Counter
 
@@ -106,14 +110,17 @@ def main(
         samples = [(t, t.reference_rtl, "selftest") for t in tasks]
         model = "selftest-golden"
     else:
-        from rl_hdl.inference import max_tokens_setting, model_id
+        from rl_hdl.inference import model_id
 
         model = model_id()
-        mt = max_tokens_setting()
-        print(f"sampling n={n} from {model} (max_tokens={mt}) for {len(tasks)} {split} tasks (in Modal) ...")
+        override = max_tokens or None  # 0 sentinel -> per-task/env resolution + auto-grow
+        budget_desc = f"override={override}" if override else "per-task/auto-grow"
+        print(f"sampling n={n} from {model} (max_tokens={budget_desc}) for {len(tasks)} {split} tasks (in Modal) ...")
         per_task = list(sample_remote.map(
-            tasks, [n] * len(tasks), [model] * len(tasks), [mt] * len(tasks)
+            tasks, [n] * len(tasks), [model] * len(tasks), [override] * len(tasks)
         ))
+        budgets = [s["budget"] for lst in per_task for s in lst]
+        print(f"token budgets used: min={min(budgets)} max={max(budgets)} (auto-grew on truncation)")
         samples = [(t, s["text"], s["finish_reason"]) for t, lst in zip(tasks, per_task) for s in lst]
 
     pairs = [(t, txt) for t, txt, _ in samples]
