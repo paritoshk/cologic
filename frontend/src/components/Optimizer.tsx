@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CodeBox } from "./CodeBox";
+import { Lattice } from "./Lattice";
 import {
   runOptimize,
   SAMPLE_RTL,
@@ -137,6 +138,9 @@ export function Optimizer() {
 
         {/* output */}
         <div className="space-y-4">
+          {running && !outcome && (
+            <Lattice live caption={log || "agents optimizing…"} />
+          )}
           {!outcome && !running && (
             <div className="rounded-lg border border-dashed border-border bg-card/50 p-8 text-center text-muted-foreground font-[family-name:var(--font-jet)] text-sm">
               results appear here — gate count, equivalence, optimized Verilog.
