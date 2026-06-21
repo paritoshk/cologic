@@ -60,7 +60,8 @@ def evaluate(gen_dir: Path) -> dict:
             print(f"[EVAL] {d['id']}: no submission (missing)", flush=True)
             designs.append({"id": d["id"], "reward": 0.0, "stage": "missing",
                             "equivalent": False, "ref_cells": None, "cand_cells": None,
-                            "area_improvement": None})
+                            "area_improvement": None, "ref_area_um2": None,
+                            "cand_area_um2": None, "area_um2_improvement": None})
             continue
         gr = grader.remote(f.read_text(), task)  # {"reward", "info", "task_id"}
         i = gr["info"]
@@ -75,15 +76,24 @@ def evaluate(gen_dir: Path) -> dict:
             "equivalent": bool(i.get("equivalent")),
             "ref_cells": i.get("ref_cells"), "cand_cells": i.get("cand_cells"),
             "area_improvement": i.get("area_improvement"),
+            # Observe-only real silicon area (populated when a liberty lib is set).
+            "ref_area_um2": i.get("ref_area_um2"),
+            "cand_area_um2": i.get("cand_area_um2"),
+            "area_um2_improvement": i.get("area_um2_improvement"),
         })
 
     rewards = [d["reward"] for d in designs]
     gains = [d["area_improvement"] for d in designs
              if d["equivalent"] and d["area_improvement"] is not None]
+    um2_gains = [d["area_um2_improvement"] for d in designs
+                 if d["equivalent"] and d["area_um2_improvement"] is not None]
     summary = {
         # Top-level scalars are the SIA self-improvement signal.
         "mean_reward": round(sum(rewards) / len(rewards), 6) if rewards else 0.0,
         "mean_area_improvement": round(sum(gains) / len(gains), 6) if gains else 0.0,
+        # Observe-only: real-area signal alongside the cell-count one. NOT the
+        # reward yet — mean_reward stays the optimization target.
+        "mean_area_um2_improvement": round(sum(um2_gains) / len(um2_gains), 6) if um2_gains else 0.0,
         "n_equivalent": sum(d["equivalent"] for d in designs),
         "n_total": len(designs),
         "designs": designs,
