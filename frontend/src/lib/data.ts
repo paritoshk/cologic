@@ -40,6 +40,41 @@ export const SNAPSHOT: Benchmark = {
   ],
 };
 
+// Live foundry state — the agents ("minions") walking the PE array, served from the
+// same /state record. We only consume what the showcase renders; power/compute/clock
+// synthesis figures are intentionally ignored (gate-count + equivalence are the signal).
+export type Agent = { role: string; level: number; target: string; verb: string };
+export type Foundry = { epoch: number; objective: string; design: string; agents: Agent[] };
+
+// Bundled fallback so the section renders if the store is down (seed values mirror
+// cologic/store.py FOUNDRY_DEFAULT).
+export const FOUNDRY_SNAPSHOT: Foundry = {
+  epoch: 1284,
+  objective: "power",
+  design: "tensor-mac / systolic_8×8",
+  agents: [
+    { role: "PLAN", level: 2, target: "PE[1][3]", verb: "probing" },
+    { role: "FORGE", level: 3, target: "PE[2][2]", verb: "sampling" },
+    { role: "PROVE", level: 4, target: "PE[5][5]", verb: "sampling" },
+  ],
+};
+
+export async function fetchFoundry(): Promise<{ data: Foundry; live: boolean }> {
+  try {
+    const c = new AbortController();
+    const to = setTimeout(() => c.abort(), 4000);
+    const r = await fetch(STATE_URL, { signal: c.signal, cache: "no-store" });
+    clearTimeout(to);
+    if (!r.ok) throw new Error("bad status");
+    const rec = await r.json();
+    const f = rec.foundry;
+    if (f && Array.isArray(f.agents)) return { data: f as Foundry, live: true };
+    throw new Error("no foundry in record");
+  } catch {
+    return { data: FOUNDRY_SNAPSHOT, live: false };
+  }
+}
+
 export async function fetchBenchmark(): Promise<{ data: Benchmark; live: boolean }> {
   try {
     const c = new AbortController();
