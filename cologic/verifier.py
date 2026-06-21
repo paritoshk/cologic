@@ -116,9 +116,12 @@ def build_testbench(task: Task) -> str:
 
     drive = "\n".join(f"      {p.name} = {_rand_rhs(p.width)};" for p in task.inputs)
     compare = "\n".join(
-        f"      total += 1; if ({p.name}__c === {p.name}__r) passed += 1;" for p in task.outputs
+        f"      rlhdl_total += 1; if ({p.name}__c === {p.name}__r) rlhdl_pass += 1;"
+        for p in task.outputs
     )
 
+    # Internal tb names are rlhdl_-prefixed so they can't collide with a DUT port
+    # named `i`, `total`, `passed`, etc. (real benchmark designs do this).
     return f"""// auto-generated testbench for task {task.task_id}
 module tb;
 {chr(10).join(decls)}
@@ -126,18 +129,18 @@ module tb;
   {task.top_module}     dut_c ({conn("__c")});
   {task.top_module}_ref dut_r ({conn("__r")});
 
-  integer i;
-  integer passed = 0;
-  integer total = 0;
+  integer rlhdl_i;
+  integer rlhdl_pass = 0;
+  integer rlhdl_total = 0;
   initial begin
     void'($urandom({task.seed}));
-    for (i = 0; i < {task.n_vectors}; i = i + 1) begin
+    for (rlhdl_i = 0; rlhdl_i < {task.n_vectors}; rlhdl_i = rlhdl_i + 1) begin
 {drive}
       #1;
 {compare}
       #1;
     end
-    $display("RESULT %0d %0d", passed, total);
+    $display("RESULT %0d %0d", rlhdl_pass, rlhdl_total);
     $finish;
   end
 endmodule

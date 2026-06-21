@@ -23,6 +23,9 @@ grader_image = (
     .apt_install(
         "git", "make", "g++", "autoconf", "flex", "bison",
         "help2man", "libfl-dev", "ccache", "perl",
+        # Yosys for the PPA (gate-count) stage; only runs behind a passing
+        # equivalence check. Equivalence itself uses the Verilator built below.
+        "yosys",
     )
     .run_commands(
         f"git clone --depth 1 --branch {VERILATOR_TAG} "
@@ -54,6 +57,15 @@ def grade_remote(completion: str, task) -> dict:
     return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
 
 
+@app.function(image=grader_image, timeout=300)
+def grade_opt_remote(candidate_rtl: str, task) -> dict:
+    """Grade one optimization candidate (gate-then-climb, incl. Yosys PPA)."""
+    from cologic.grader import grade
+
+    r = grade(candidate_rtl, task)
+    return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
+
+
 @app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")])
 def list_models(substr: str = "") -> list[str]:
     """Return Fireworks model ids visible to this account (optionally filtered)."""
@@ -69,44 +81,117 @@ def list_models(substr: str = "") -> list[str]:
     return sorted(i for i in ids if substr.lower() in i.lower())
 
 
-@app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=600)
-def sample_remote(task, n: int, model: str) -> list[str]:
-    """Sample `n` completions for one task from Fireworks, inside Modal."""
-    from cologic.inference import complete
+@app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=900)
+def sample_remote(task, model: str, max_tokens: int | None, temperature: float) -> dict:
+    """One completion from Fireworks (budget auto-grows on truncation).
 
-    temperature = 0.0 if n == 1 else 0.7  # greedy for a stable n=1 baseline read
-    return [complete(task, model=model, temperature=temperature) for _ in range(n)]
+    Mapped per (task, sample) so every completion is an independent Modal input —
+    maximum parallelism, and no single container runs n calls in series (which
+    could blow the timeout). Returns {text, finish_reason, budget}.
+    """
+    from cologic.inference import sample_until_complete
+
+    text, finish, budget = sample_until_complete(
+        task, model=model, temperature=temperature, max_tokens=max_tokens
+    )
+    return {"text": text, "finish_reason": finish, "budget": budget}
 
 
 @app.local_entrypoint()
-def main(split: str = "heldout", n: int = 1, selftest: bool = False, out: str = "baseline.json"):
-    from cologic.eval import evaluate
-    from cologic.tasks import HELDOUT_TASKS, TRAIN_TASKS
+def main(
+    split: str = "heldout",
+    n: int = 1,
+    selftest: bool = False,
+    out: str = "baseline.json",
+    dump: str = "",
+    max_tokens: int = 0,
+):
+    from collections import Counter
 
-    tasks = {"heldout": HELDOUT_TASKS, "train": TRAIN_TASKS}[split]
+    from cologic.eval import aggregate
+
+    if split == "verilogeval":
+        from cologic.datasets.verilogeval import load as load_verilogeval
+
+        tasks = load_verilogeval()
+    else:
+        from cologic.tasks import HELDOUT_TASKS, TRAIN_TASKS
+
+        tasks = {"heldout": HELDOUT_TASKS, "train": TRAIN_TASKS}[split]
 
     if selftest:
         # Feed each task its own golden reference: a green end-to-end check of the
         # Modal grader with no model / API key required (expect pass@1 = 1.0).
-        pairs = [(t, t.reference_rtl) for t in tasks]
+        samples = [(t, t.reference_rtl, "selftest") for t in tasks]
         model = "selftest-golden"
     else:
         from cologic.inference import model_id
 
         model = model_id()
-        print(f"sampling n={n} from {model} for {len(tasks)} {split} tasks (in Modal) ...")
-        per_task = list(sample_remote.map(tasks, [n] * len(tasks), [model] * len(tasks)))
-        pairs = [(t, c) for t, comps in zip(tasks, per_task) for c in comps]
+        override = max_tokens or None  # 0 sentinel -> per-task/env resolution + auto-grow
+        temperature = 0.0 if n == 1 else 0.7  # greedy for a stable n=1 read, else sample
+        budget_desc = f"override={override}" if override else "per-task/auto-grow"
+        jobs = [t for t in tasks for _ in range(n)]  # one Modal input per completion
+        print(f"sampling n={n} ({len(jobs)} completions) from {model} "
+              f"(max_tokens={budget_desc}, temp={temperature}) for {len(tasks)} {split} tasks (in Modal) ...")
+        dicts = list(sample_remote.map(
+            jobs, [model] * len(jobs), [override] * len(jobs), [temperature] * len(jobs)
+        ))
+        budgets = [d["budget"] for d in dicts]
+        print(f"token budgets used: min={min(budgets)} max={max(budgets)} (auto-grew on truncation)")
+        samples = [(t, d["text"], d["finish_reason"]) for t, d in zip(jobs, dicts)]
 
-    def modal_grade_batch(ps):
-        comps = [c for _, c in ps]
-        tks = [t for t, _ in ps]
-        return list(grade_remote.map(comps, tks))
+    pairs = [(t, txt) for t, txt, _ in samples]
+    results = list(grade_remote.map([c for _, c in pairs], [t for t, _ in pairs]))
 
-    report = evaluate(pairs, modal_grade_batch, model=model)
+    report = aggregate(pairs, results, model=model)
     print("\n" + report.table() + "\n")
+    print("finish_reason:", dict(Counter(f for _, _, f in samples)))
     Path(out).write_text(report.to_json())
     print(f"wrote {out}")
+
+    if dump:
+        import json
+
+        with open(dump, "w") as fh:
+            for (t, txt, finish), res in zip(samples, results):
+                fh.write(json.dumps({
+                    "task_id": t.task_id,
+                    "finish_reason": finish,
+                    "reward": res["reward"],
+                    "stage": res["info"].get("stage"),
+                    "completion": txt,
+                }) + "\n")
+        print(f"wrote {dump} ({len(samples)} records)")
+
+
+@app.local_entrypoint()
+def floor():
+    """§9 floor: grade the baseline + a good and a broken rewrite of mul8.
+
+    Proves the immutable grader end to end with real Yosys area numbers:
+      baseline -> equivalent, 0 area win        (it IS the reference)
+      good     -> equivalent, area win > 0       (the optimization to discover)
+      broken   -> not equivalent, no PPA credit  (gate catches the break)
+
+    Usage:  modal run modal_app.py::floor
+    """
+    from cologic.designs import MUL8_BASELINE, MUL8_BROKEN, MUL8_GOOD, mul8
+
+    cands = [("baseline", MUL8_BASELINE), ("good (a*b)", MUL8_GOOD), ("broken", MUL8_BROKEN)]
+    results = list(grade_opt_remote.map([c for _, c in cands], [mul8] * len(cands)))
+
+    print(f"\nfloor design: {mul8.task_id} ({mul8.top_module})\n")
+    print(f"{'candidate':<14} {'reward':>7}  {'stage':<18} {'equiv':>5} {'ref':>5} {'cand':>5} {'win':>7}")
+    print("-" * 70)
+    for (name, _), r in zip(cands, results):
+        i = r["info"]
+        win = "" if i["area_improvement"] is None else f"{i['area_improvement'] * 100:+.1f}%"
+        ref = "" if i["ref_cells"] is None else i["ref_cells"]
+        cand = "" if i["cand_cells"] is None else i["cand_cells"]
+        print(f"{name:<14} {r['reward']:>7.3f}  {i['stage']:<18} {str(i['equivalent']):>5} "
+              f"{str(ref):>5} {str(cand):>5} {win:>7}")
+    print()
 
 
 @app.local_entrypoint()

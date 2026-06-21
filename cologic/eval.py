@@ -57,7 +57,13 @@ class EvalReport:
 def evaluate(pairs: list[tuple[Task, str]], grade_batch: GradeBatch, *, model: str = "?") -> EvalReport:
     """Grade pre-sampled (task, completion) pairs and aggregate by task."""
     results = grade_batch(pairs)
-    assert len(results) == len(pairs), "grader must return one result per pair"
+    return aggregate(pairs, results, model=model)
+
+
+def aggregate(pairs: list[tuple[Task, str]], results: list[dict], *, model: str = "?") -> EvalReport:
+    """Aggregate already-computed grade results by task. Split out so callers can
+    grade once and reuse the results for both the report and a per-sample dump."""
+    assert len(results) == len(pairs), "one result per pair"
 
     by_task: dict[str, list[tuple[Task, dict]]] = {}
     for (task, _), res in zip(pairs, results):
