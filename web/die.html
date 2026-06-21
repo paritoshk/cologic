@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cologic · die view</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#070b08}
+  body{font-feature-settings:"ss01","cv11";-webkit-font-smoothing:antialiased;
+       background:radial-gradient(ellipse 90% 60% at 50% 0%,#0c1610 0%,#070b08 60%);
+       font-family:Inter,system-ui,sans-serif;color:#cbe3c2;padding:22px 26px 60px;min-height:100vh}
+  .mono{font-family:'JetBrains Mono',monospace}
+  .blk{cursor:pointer;transition:border-color .12s,box-shadow .12s}
+  .blk:hover{box-shadow:0 0 0 1px currentColor inset}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#1c2a20;border-radius:4px}
+</style>
+</head>
+<body>
+<div style="max-width:1060px;margin:0 auto">
+
+  <div style="display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid #1c2a20;margin-bottom:18px">
+    <div style="width:32px;height:32px;border-radius:6px;background:linear-gradient(135deg,#3FA34D,#2c7a37);display:flex;align-items:center;justify-content:center;font-family:'Instrument Serif',serif;font-size:21px;color:#06210c;font-weight:700">C</div>
+    <div style="flex:1">
+      <div class="mono" style="font-size:15px;color:#eafbe4;font-weight:600">Cologic · die view</div>
+      <div class="mono" style="font-size:11px;color:#647A5E;letter-spacing:.04em">streaming multiprocessor · SM90 (Hopper-class) · structural diagram</div>
+    </div>
+    <a href="./index.html" class="mono" style="text-decoration:none;font-size:12px;color:#5BC24A;border:1px solid rgba(91,194,74,.4);border-radius:6px;padding:7px 13px">← foundry</a>
+  </div>
+
+  <div style="display:flex;gap:14px;align-items:flex-start;background:#0b140d;border:1px solid #1c2a20;border-radius:8px;padding:13px 16px;margin-bottom:14px">
+    <div id="selDot" style="width:10px;height:10px;border-radius:2px;background:#3FA34D;margin-top:4px;flex:none"></div>
+    <div style="flex:1">
+      <div id="selName" class="mono" style="font-size:14px;color:#eafbe4;font-weight:600">Streaming Multiprocessor (SM)</div>
+      <div id="selDesc" style="font-size:12.5px;color:#8aa082;line-height:1.5;margin-top:2px">A uniform compute core: four processing-block quadrants sharing an L1 instruction cache on top and an L1 data / shared-memory bank below. Click any block to inspect it.</div>
+    </div>
+    <div class="mono" style="font-size:10px;color:#4a5a44;text-transform:uppercase;letter-spacing:.1em;flex:none;padding-top:3px">click a block</div>
+  </div>
+
+  <div id="legend" class="mono" style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:16px;font-size:11px;color:#8aa082"></div>
+
+  <div style="background:#0a0f0a;border:1px solid #294a30;border-radius:8px;padding:14px">
+    <div class="mono" style="font-size:12px;color:#7BE05A;font-weight:600;margin-bottom:10px;letter-spacing:.06em">SM</div>
+
+    <div class="blk mono" data-k="L1I" style="color:#5fcdd6;text-align:center;font-size:11px;background:#0e2c33;border:1px solid #2f6b78;border-radius:3px;padding:8px;margin-bottom:8px">L1 Instruction Cache</div>
+
+    <div id="quads" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+
+    <div class="blk mono" data-k="TMA" style="color:#7BE05A;text-align:center;font-size:10px;background:#143019;border:1px solid #2f7a3a;border-radius:3px;padding:8px;margin-top:8px">Tensor Memory Accelerator</div>
+    <div class="blk mono" data-k="L1D" style="color:#6fb6d8;text-align:center;font-size:10px;background:#0e2734;border:1px solid #2c6078;border-radius:3px;padding:8px;margin-top:6px">256 KB L1 Data Cache / Shared Memory</div>
+    <div id="texs" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-top:6px"></div>
+  </div>
+
+  <div class="mono" style="font-size:10.5px;color:#4a5a44;line-height:1.6;margin-top:14px">structure after NVIDIA Hopper SM90 · GPU cores in <span style="color:#7BE05A">green</span>, tensor/special compute in <span style="color:#e08ac0">maroon</span>, scheduling in <span style="color:#e6c84a">orange</span>, memory in <span style="color:#6fb6d8">blue/teal</span> · this is how Cologic will render a real netlist, structure over texture</div>
+</div>
+
+<script>
+const INFO={
+  L1I:["L1 Instruction Cache","Per-SM cache of decoded instructions, shared by all four quadrants. Feeds each quadrant’s L0 cache.","#5fcdd6"],
+  L0:["L0 Instruction Cache","Quadrant-local instruction cache — lowest-latency feed to the warp scheduler.","#5fcdd6"],
+  WARP:["Warp Scheduler","Issues one 32-thread warp per clock to this quadrant’s execution units. Hides memory latency by switching warps every cycle.","#e6c84a"],
+  DISP:["Dispatch Unit","Routes the issued warp’s instruction to the correct execution pipe (INT, FP, tensor, LD/ST).","#e6c84a"],
+  REG:["Register File","16,384 × 32-bit registers per quadrant — operand storage for every in-flight thread. The widest, fastest memory on the SM.","#6fb6d8"],
+  CORES:["CUDA Cores","The compute grid: INT32, FP32 and FP64 lanes. One MAC per core per clock — this is where Cologic’s systolic array maps.","#7BE05A"],
+  TENSOR:["Tensor Core (4th gen)","Operates on whole matrix tiles per instruction (HMMA: D = A·B + C). The unit Cologic targets for tensor-matmul kernels.","#e08ac0"],
+  LDST:["Load / Store Unit","Moves operands between the register file and L1/shared memory — one address per thread per clock.","#7BE05A"],
+  SFU:["Special Function Unit","Transcendentals (sin, rsqrt, exp) and interpolation at reduced throughput.","#e08ac0"],
+  TMA:["Tensor Memory Accelerator","Asynchronously bulk-copies large tiles between global and shared memory, freeing threads from address math.","#7BE05A"],
+  L1D:["L1 Data Cache / Shared Memory","256 KB unified bank, split between hardware-managed L1 and program-managed shared memory.","#6fb6d8"],
+  TEX:["Texture Unit","Sampling / addressing hardware (Tex) — repurposed as read-only data cache in compute workloads.","#7BE05A"],
+};
+const LEGEND=[["#193f1f","#2f7a3a","compute (INT/FP cores)"],["#341228","#8a3d6b","tensor / special (TC · SFU)"],
+  ["#322b0c","#8a7a1f","scheduling (warp · dispatch)"],["#0e2734","#2c6078","memory (register · L1 · shared)"],
+  ["#0e2c33","#2f6b78","instruction cache"]];
+const CORECOLS=[["INT32","#193f1f","#7BE05A"],["FP32","#1d4a25","#8fe07a"],["FP32","#193f1f","#7BE05A"],["FP64","#234a47","#8fd6c8"]];
+
+document.getElementById('legend').innerHTML = LEGEND.map(([c,b,t])=>
+  `<span style="display:flex;align-items:center;gap:6px"><span style="width:11px;height:11px;border-radius:2px;background:${c};border:1px solid ${b}"></span>${t}</span>`).join("");
+
+function quad(){
+  const cores = CORECOLS.map(([lab,bg,fg])=>
+    `<div style="flex:1;display:flex;flex-direction:column;gap:2px">`+
+    Array(8).fill(`<div class="mono" style="font-size:6px;text-align:center;color:${fg};background:${bg};border-radius:1px;padding:1.5px 0;letter-spacing:.02em">${lab}</div>`).join("")+
+    `</div>`).join("");
+  const ldst = Array(8).fill(`<div class="blk mono" data-k="LDST" style="flex:1;text-align:center;font-size:6.5px;color:#7BE05A;background:#173a1d;border:1px solid #2f7a3a;border-radius:1px;padding:3px 0">LD/ST</div>`).join("");
+  return `<div style="background:#0b120c;border:1px solid #1c2a20;border-radius:4px;padding:7px;display:flex;flex-direction:column;gap:4px">
+    <div class="blk mono" data-k="L0" style="text-align:center;font-size:9.5px;color:#5fcdd6;background:#0e2c33;border:1px solid #2f6b78;border-radius:2px;padding:4px">L0 Instruction Cache</div>
+    <div class="blk mono" data-k="WARP" style="text-align:center;font-size:9.5px;color:#e6c84a;background:#322b0c;border:1px solid #8a7a1f;border-radius:2px;padding:4px">Warp Scheduler (32 thread/clk)</div>
+    <div class="blk mono" data-k="DISP" style="text-align:center;font-size:9.5px;color:#e6c84a;background:#2a2409;border:1px solid #6e6118;border-radius:2px;padding:4px">Dispatch Unit (32 thread/clk)</div>
+    <div class="blk mono" data-k="REG" style="text-align:center;font-size:9.5px;color:#6fb6d8;background:#0e2734;border:1px solid #2c6078;border-radius:2px;padding:4px">Register File (16,384 × 32-bit)</div>
+    <div style="display:flex;gap:4px">
+      <div class="blk" data-k="CORES" style="flex:1;display:flex;gap:2px;background:#0d160f;border:1px solid #1c2a20;border-radius:2px;padding:3px;color:#3FA34D">${cores}</div>
+      <div class="blk mono" data-k="TENSOR" style="width:78px;flex:none;display:flex;align-items:center;justify-content:center;text-align:center;font-size:8px;color:#e08ac0;background:#341228;border:1px solid #8a3d6b;border-radius:2px;line-height:1.4">TENSOR CORE<br>4TH GEN</div>
+    </div>
+    <div style="display:flex;gap:2px">${ldst}
+      <div class="blk mono" data-k="SFU" style="width:48px;flex:none;text-align:center;font-size:7px;color:#e08ac0;background:#341228;border:1px solid #8a3d6b;border-radius:1px;padding:3px 0">SFU</div>
+    </div>
+  </div>`;
+}
+document.getElementById('quads').innerHTML = Array(4).fill(quad()).join("");
+document.getElementById('texs').innerHTML = Array(4).fill(
+  `<div class="blk mono" data-k="TEX" style="text-align:center;font-size:9.5px;color:#7BE05A;background:#173a1d;border:1px solid #2f7a3a;border-radius:3px;padding:6px">Tex</div>`).join("");
+
+document.body.addEventListener('click',e=>{
+  const el=e.target.closest('[data-k]'); if(!el) return;
+  const [name,desc,color]=INFO[el.dataset.k]||[];
+  if(!name) return;
+  document.getElementById('selName').textContent=name;
+  document.getElementById('selDesc').textContent=desc;
+  document.getElementById('selDot').style.background=color;
+});
+</script>
+</body>
+</html>

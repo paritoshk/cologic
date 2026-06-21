@@ -33,8 +33,9 @@ obj_dir/
 work/
 rlhdl_*/
 
-# generated eval output
+# generated eval output (regeneratable; web/data.json is the committed contract)
 baseline.json
+cologic.json
 
 # HUD local eval scratch (account-specific)
 .hud_eval.toml
