@@ -108,6 +108,42 @@ popcount8 = Task(
     tags=["comb", "reduction", "headroom:adder-tree"],
 )
 
-OPT_TASKS: list[Task] = [mul8, mux4, popcount8]
+# --- share_mul: an unshared datapath. The baseline instantiates TWO multipliers
+# but only one product is ever selected; the win is to share one multiplier and
+# mux its operands. This headroom SURVIVES full Yosys synth (the `share` pass is
+# not in the default recipe and abc won't merge $mul), so it's ~+49% real, and
+# it's purely combinational — the existing equivalence gate handles it. This is
+# the brief's canonical "resource-share / unshared datapath" optimization. ---
+SHARE_MUL_BASELINE = """module share_mul(input [7:0] a, input [7:0] b, input [7:0] c, input [7:0] d,
+                 input s, output [15:0] y);
+  wire [15:0] prod_ab = a * b;
+  wire [15:0] prod_cd = c * d;
+  assign y = s ? prod_ab : prod_cd;
+endmodule
+"""
+
+share_mul = Task(
+    task_id="opt_share_mul",
+    top_module="share_mul",
+    spec="Optimize this datapath for gate count while preserving its function "
+         "(it selects one of two 8x8 products).",
+    interface=[
+        Port("a", "input", 8), Port("b", "input", 8), Port("c", "input", 8),
+        Port("d", "input", 8), Port("s", "input", 1), Port("y", "output", 16),
+    ],
+    reference_rtl=SHARE_MUL_BASELINE,
+    n_vectors=256,
+    tags=["comb", "arith", "headroom:resource-share"],
+)
+
+# The optimization the agent should discover (≈49% smaller, provably equivalent):
+#   assign y = (s ? a : c) * (s ? b : d);
+SHARE_MUL_SHARED = """module share_mul(input [7:0] a, input [7:0] b, input [7:0] c, input [7:0] d,
+                 input s, output [15:0] y);
+  assign y = (s ? a : c) * (s ? b : d);
+endmodule
+"""
+
+OPT_TASKS: list[Task] = [mul8, mux4, popcount8, share_mul]
 BY_ID = {t.task_id: t for t in OPT_TASKS}
 
