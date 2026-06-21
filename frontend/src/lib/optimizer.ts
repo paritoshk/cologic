@@ -6,23 +6,25 @@ export const OPT_BASE = "https://yc-hack27--rl-hdl-web.modal.run";
 // (Vercel env); otherwise the user pastes their own X-RLHDL-Token in the UI.
 export const DEFAULT_TOKEN = process.env.NEXT_PUBLIC_RLHDL_TOKEN ?? "";
 
-// A small default design so the demo runs with zero setup (a 4:1 mux).
-export const SAMPLE_NAME = "mux4.v";
-export const SAMPLE_RTL = `// mux4.v - 4:1 multiplexer, 8-bit data
-module mux4 (
-  input  wire [7:0] a,
-  input  wire [7:0] b,
-  input  wire [7:0] c,
-  input  wire [7:0] d,
-  input  wire [1:0] sel,
+// A harder default design so the demo runs with zero setup (an 8:1 mux).
+export const SAMPLE_NAME = "mux8.v";
+export const SAMPLE_RTL = `// mux8.v - 8:1 multiplexer, 8-bit data
+module mux8 (
+  input  wire [7:0] in0, in1, in2, in3,
+  input  wire [7:0] in4, in5, in6, in7,
+  input  wire [2:0] sel,
   output reg  [7:0] y
 );
   always @(*) begin
     case (sel)
-      2'b00: y = a;
-      2'b01: y = b;
-      2'b10: y = c;
-      default: y = d;
+      3'd0: y = in0;
+      3'd1: y = in1;
+      3'd2: y = in2;
+      3'd3: y = in3;
+      3'd4: y = in4;
+      3'd5: y = in5;
+      3'd6: y = in6;
+      default: y = in7;
     endcase
   end
 endmodule

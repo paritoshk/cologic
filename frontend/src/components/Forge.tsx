@@ -11,6 +11,13 @@ import { runOptimize, SAMPLE_RTL, SAMPLE_NAME, DEFAULT_TOKEN, type OptOutcome } 
 type Role = "PLAN" | "FORGE" | "PROVE";
 const VERB: Record<Role, string> = { PLAN: "reads", FORGE: "rewrites", PROVE: "proves" };
 const COLOR: Record<Role, string> = { PLAN: "#5fa8d6", FORGE: "#3FA34D", PROVE: "#c062a0" };
+// waypoints on the chip platform (% of the container) the minions stroll between
+const WALK_PTS = [
+  { x: 40, y: 14 },
+  { x: 60, y: 30 },
+  { x: 40, y: 48 },
+  { x: 22, y: 30 },
+];
 
 export function Forge() {
   const [rtl, setRtl] = useState(SAMPLE_RTL.replace(/\n$/, ""));
@@ -21,7 +28,17 @@ export function Forge() {
   const [error, setError] = useState("");
   const [active, setActive] = useState<{ role: Role; line: number }>({ role: "PLAN", line: 6 });
   const [round, setRound] = useState(1285);
+  const [walk, setWalk] = useState([0, 1, 2]); // each platform minion's current waypoint
   const abort = useRef<AbortController | null>(null);
+
+  // the platform minions stroll between waypoints — clearly-visible motion (not just a bob)
+  useEffect(() => {
+    const id = setInterval(
+      () => setWalk((w) => w.map((i) => (i + 1) % WALK_PTS.length)),
+      running ? 700 : 1300,
+    );
+    return () => clearInterval(id);
+  }, [running]);
 
   const lines = rtl.split("\n");
   const editableLines = lines
@@ -172,10 +189,23 @@ export function Forge() {
                 </g>
               ))}
             </svg>
-            {/* the three big minions standing on the platform — the active one hops */}
-            <div className="absolute left-[20%] top-[34%]"><PixelMinion role="PLAN" size={56} working={running} active={active.role === "PLAN"} /></div>
-            <div className="absolute left-[44%] top-[24%]"><PixelMinion role="FORGE" size={68} working={running} active={active.role === "FORGE"} /></div>
-            <div className="absolute left-[66%] top-[40%]"><PixelMinion role="PROVE" size={56} working={running} active={active.role === "PROVE"} /></div>
+            {/* the three minions stroll the platform; the active one hops */}
+            {([
+              { role: "PLAN", size: 52 },
+              { role: "FORGE", size: 64 },
+              { role: "PROVE", size: 52 },
+            ] as { role: Role; size: number }[]).map((m, k) => {
+              const p = WALK_PTS[walk[k]];
+              return (
+                <div
+                  key={m.role}
+                  className="absolute"
+                  style={{ left: `${p.x}%`, top: `${p.y}%`, transition: "left 0.9s ease-in-out, top 0.9s ease-in-out" }}
+                >
+                  <PixelMinion role={m.role} size={m.size} working={running} active={active.role === m.role} />
+                </div>
+              );
+            })}
           </div>
 
           {/* agent status, synced to the active edit */}
