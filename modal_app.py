@@ -18,7 +18,8 @@ import modal
 
 VERILATOR_TAG = "v5.038"
 
-grader_image = (
+# Silicon toolchain (Verilator + Yosys), no local source yet so we can branch it.
+_toolchain = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install(
         "git", "make", "g++", "autoconf", "flex", "bison",
@@ -33,7 +34,16 @@ grader_image = (
         "cd /tmp/verilator && autoconf && ./configure && "
         "make -j$(nproc) && make install && rm -rf /tmp/verilator",
     )
-    .add_local_python_source("cologic")
+)
+
+grader_image = _toolchain.add_local_python_source("cologic")
+
+# The harness runs sampling (Fireworks) AND grading (Verilator+Yosys) in one
+# container, so it needs the toolchain + the OpenAI client + both packages.
+harness_image = (
+    _toolchain
+    .pip_install("openai>=1.0")
+    .add_local_python_source("cologic", "harness")
 )
 
 # Lightweight image for inference — just the OpenAI-compatible client. The
@@ -64,6 +74,58 @@ def grade_opt_remote(candidate_rtl: str, task) -> dict:
 
     r = grade(candidate_rtl, task)
     return {"reward": r.reward, "info": r.info, "task_id": task.task_id}
+
+
+@app.function(image=harness_image, secrets=[modal.Secret.from_name("fireworks-api")], timeout=1200)
+def optimize_remote(task, model: str, n_candidates: int, temperature: float,
+                    max_repair_rounds: int) -> dict:
+    """Run the MAGE-repurposed harness on one design, in one container.
+
+    Sampling (Fireworks) and grading (Verilator equivalence + Yosys PPA) happen
+    here together, so the returned numbers are end-to-end real. Returns a compact
+    summary (no full RTL logs) plus the best candidate's RTL.
+    """
+    import time
+
+    from harness import HarnessConfig, default_model_fn, optimize
+
+    # Warm the deployment through scale-from-zero (Fireworks 503s for a few minutes
+    # when cold; the client's own retries don't span that). One-off demo concern,
+    # kept out of the SIA-evolved scaffold.
+    for _ in range(40):
+        try:
+            default_model_fn([{"role": "user", "content": "ping"}], model=model,
+                             temperature=0.0, max_tokens=1)
+            break
+        except Exception as e:  # noqa: BLE001
+            if "scal" in str(e).lower() or "503" in str(e):
+                time.sleep(15)
+                continue
+            raise
+
+    def model_fn(messages, *, temperature, max_tokens):
+        return default_model_fn(messages, model=model, temperature=temperature, max_tokens=max_tokens)
+
+    res = optimize(task, model_fn=model_fn, config=HarnessConfig(
+        n_candidates=n_candidates, temperature=temperature, max_repair_rounds=max_repair_rounds,
+    ))
+    pool = [
+        {"origin": c.origin, "reward": round(c.reward, 4), "stage": c.info.get("stage"),
+         "equivalent": c.info.get("equivalent"), "ref_cells": c.info.get("ref_cells"),
+         "cand_cells": c.info.get("cand_cells"), "area_improvement": c.info.get("area_improvement")}
+        for c in res.pool
+    ]
+    return {
+        "task_id": task.task_id,
+        "best": {"origin": res.best.origin, "reward": round(res.best.reward, 4),
+                 "info": {k: res.best.info.get(k) for k in
+                          ("stage", "equivalent", "ref_cells", "cand_cells", "area_improvement")},
+                 "rtl": res.best.rtl},
+        "baseline_reward": round(res.baseline_reward, 4),
+        "n_equivalent": res.n_equivalent,
+        "improved": res.improved,
+        "pool": pool,
+    }
 
 
 @app.function(image=inference_image, secrets=[modal.Secret.from_name("fireworks-api")])
@@ -191,6 +253,50 @@ def floor():
         cand = "" if i["cand_cells"] is None else i["cand_cells"]
         print(f"{name:<14} {r['reward']:>7.3f}  {i['stage']:<18} {str(i['equivalent']):>5} "
               f"{str(ref):>5} {str(cand):>5} {win:>7}")
+    print()
+
+
+@app.local_entrypoint()
+def harness_run(
+    design: str = "mul8",
+    model: str = "accounts/sorenmadsen/deployments/tpwhh4w8",
+    n: int = 6,
+    temperature: float = 0.9,
+    repair: int = 2,
+):
+    """Live demo: run the MAGE harness on a real design with the Fireworks policy.
+
+    Sampling + Verilator equivalence + Yosys PPA all run in one Modal container.
+    The headline is whether the policy found a provably-equivalent, smaller design.
+
+    Usage:  modal run modal_app.py::harness_run            # mul8, default policy
+            modal run modal_app.py::harness_run --n 10 --temperature 1.0
+    """
+    from cologic.designs import BY_ID
+
+    task = BY_ID[f"opt_{design}"] if f"opt_{design}" in BY_ID else BY_ID[design]
+    print(f"\nharness on {task.task_id} ({task.top_module}) | model={model} "
+          f"| n={n} temp={temperature} repair={repair}\n")
+
+    r = optimize_remote.remote(task, model, n, temperature, repair)
+
+    print(f"{'candidate':<34} {'reward':>7}  {'stage':<18} {'equiv':>5} {'ref':>5} {'cand':>5} {'win':>7}")
+    print("-" * 92)
+    for c in r["pool"]:
+        win = "" if c["area_improvement"] is None else f"{c['area_improvement'] * 100:+.1f}%"
+        ref = "" if c["ref_cells"] is None else c["ref_cells"]
+        cand = "" if c["cand_cells"] is None else c["cand_cells"]
+        print(f"{c['origin']:<34} {c['reward']:>7.3f}  {str(c['stage']):<18} "
+              f"{str(c['equivalent']):>5} {str(ref):>5} {str(cand):>5} {win:>7}")
+
+    b = r["best"]
+    print(f"\nbest: {b['origin']}  reward={b['reward']}  "
+          f"equivalent={b['info'].get('equivalent')}  "
+          f"area_improvement={b['info'].get('area_improvement')}")
+    print(f"baseline_reward={r['baseline_reward']}  n_equivalent={r['n_equivalent']}/"
+          f"{len(r['pool'])}  improved={r['improved']}")
+    if r["improved"]:
+        print("\n--- winning RTL ---\n" + b["rtl"])
     print()
 
 
